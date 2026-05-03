@@ -1,0 +1,20 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+server
+
+# Environment variables
+.env
+
+# Dependencies
+vendor/
+
+# IDEs
+.vscode/
+.idea/
+
+# Docker
+.docker/
