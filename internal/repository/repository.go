@@ -8,6 +8,7 @@ import (
 )
 
 type Repository interface {
+	CheckEmailExists(email string) (bool, error)
 	CreateReport(profileID uuid.UUID, req model.CreateReportRequest) error
 	GetReportsByProfileID(profileID uuid.UUID) ([]model.Report, error)
 	GetAllReports(statusFilter string) ([]model.Report, error)
@@ -25,11 +26,15 @@ func NewRepository(db *gorm.DB) Repository {
 	return &repository{db: db}
 }
 
+func (r *repository) CheckEmailExists(email string) (bool, error) {
+	var count int64
+	err := r.db.Model(&model.Profile{}).Where("email = ?", email).Count(&count).Error
+	return count > 0, err
+}
+
 func (r *repository) CreateReport(profileID uuid.UUID, req model.CreateReportRequest) error {
-	// Use raw SQL for PostGIS geography ST_SetSRID and ST_MakePoint
 	query := `INSERT INTO reports (profile_id, description, phone_number, location) 
 			  VALUES (?, ?, ?, ST_SetSRID(ST_MakePoint(?, ?), 4326)::geography)`
-	
 	err := r.db.Exec(query, profileID, req.Description, req.PhoneNumber, req.Lng, req.Lat).Error
 	return err
 }
@@ -51,7 +56,6 @@ func (r *repository) GetAllReports(statusFilter string) ([]model.Report, error) 
 }
 
 func (r *repository) VerifyReport(reportID uuid.UUID) error {
-	// Transaction: Update report to VALID and add 10 points to reporter
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		var report model.Report
 		if err := tx.First(&report, "id = ?", reportID).Error; err != nil {
@@ -59,7 +63,7 @@ func (r *repository) VerifyReport(reportID uuid.UUID) error {
 		}
 
 		if report.Status != "PENDING" {
-			return gorm.ErrInvalidData // Only PENDING can be VERIFIED
+			return gorm.ErrInvalidData
 		}
 
 		if err := tx.Model(&report).Update("status", "VALID").Error; err != nil {
@@ -75,7 +79,6 @@ func (r *repository) VerifyReport(reportID uuid.UUID) error {
 }
 
 func (r *repository) ResolveReport(reportID uuid.UUID) error {
-	// Transaction: Update report to RESOLVED and add 50 bonus points to reporter
 	return r.db.Transaction(func(tx *gorm.DB) error {
 		var report model.Report
 		if err := tx.First(&report, "id = ?", reportID).Error; err != nil {
@@ -83,7 +86,7 @@ func (r *repository) ResolveReport(reportID uuid.UUID) error {
 		}
 
 		if report.Status != "VALID" {
-			return gorm.ErrInvalidData // Must be VALID first
+			return gorm.ErrInvalidData
 		}
 
 		if err := tx.Model(&report).Update("status", "RESOLVED").Error; err != nil {

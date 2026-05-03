@@ -27,13 +27,22 @@ func NewHandler(repo repository.Repository, cfg *config.Config) *Handler {
 
 // ----------------- AUTH -----------------
 
-func (h *Handler) AuthOTP(c *fiber.Ctx) error {
+func (h *Handler) AuthRegister(c *fiber.Ctx) error {
 	var req model.OTPRequest
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Bad Request: Invalid request body"})
 	}
 
-	err := h.Supabase.Auth.SendMagicLink(c.Context(), req.Email)
+	// Cek apakah email sudah terdaftar
+	exists, err := h.Repo.CheckEmailExists(req.Email)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Internal Server Error"})
+	}
+	if exists {
+		return c.Status(fiber.StatusConflict).JSON(fiber.Map{"error": "Email sudah terdaftar. Silakan lakukan Login."})
+	}
+
+	err = h.Supabase.Auth.SendMagicLink(c.Context(), req.Email)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
 			"error":  "Bad Request: Failed to send OTP. Please wait 60 seconds before trying again.",
@@ -41,7 +50,33 @@ func (h *Handler) AuthOTP(c *fiber.Ctx) error {
 		})
 	}
 
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "OTP sent successfully"})
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "OTP terkirim untuk Registrasi"})
+}
+
+func (h *Handler) AuthLogin(c *fiber.Ctx) error {
+	var req model.OTPRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Bad Request: Invalid request body"})
+	}
+
+	// Cek apakah email sudah terdaftar
+	exists, err := h.Repo.CheckEmailExists(req.Email)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Internal Server Error"})
+	}
+	if !exists {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Email belum terdaftar. Silakan lakukan Registrasi terlebih dahulu."})
+	}
+
+	err = h.Supabase.Auth.SendMagicLink(c.Context(), req.Email)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
+			"error":  "Bad Request: Failed to send OTP. Please wait 60 seconds before trying again.",
+			"detail": err.Error(),
+		})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "OTP terkirim untuk Login"})
 }
 
 func (h *Handler) AuthVerify(c *fiber.Ctx) error {

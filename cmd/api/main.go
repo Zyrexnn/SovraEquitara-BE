@@ -62,7 +62,8 @@ func main() {
 
 	// Public Routes (Auth)
 	authGroup := api.Group("/auth")
-	authGroup.Post("/otp", h.AuthOTP)
+	authGroup.Post("/register", h.AuthRegister)
+	authGroup.Post("/login", h.AuthLogin)
 	authGroup.Post("/verify", h.AuthVerify)
 
 	// Protected Routes (Requires valid JWT)
