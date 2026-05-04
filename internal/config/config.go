@@ -13,6 +13,11 @@ type Config struct {
 	SupabaseJWTSecret string
 	DatabaseURL       string
 	Port              string
+	SMTPHost          string
+	SMTPPort          string
+	SMTPUser          string
+	SMTPPass          string
+	SMTPFrom          string
 }
 
 func LoadConfig() *Config {
@@ -32,5 +37,10 @@ func LoadConfig() *Config {
 		SupabaseJWTSecret: os.Getenv("SUPABASE_JWT_SECRET"),
 		DatabaseURL:       os.Getenv("DATABASE_URL"),
 		Port:              port,
+		SMTPHost:          os.Getenv("SMTP_HOST"),
+		SMTPPort:          os.Getenv("SMTP_PORT"),
+		SMTPUser:          os.Getenv("SMTP_USER"),
+		SMTPPass:          os.Getenv("SMTP_PASS"),
+		SMTPFrom:          os.Getenv("SMTP_FROM"),
 	}
 }

@@ -20,8 +20,11 @@ func main() {
 	// Load Configuration
 	cfg := config.LoadConfig()
 
-	// Initialize Database
-	db, err := gorm.Open(postgres.Open(cfg.DatabaseURL), &gorm.Config{})
+	// Initialize Database with PreferSimpleProtocol for Supabase Pooler compatibility
+	db, err := gorm.Open(postgres.New(postgres.Config{
+		DSN:                  cfg.DatabaseURL,
+		PreferSimpleProtocol: true, // WAJIB untuk Supabase Pooler (Port 6543)
+	}), &gorm.Config{})
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
@@ -65,6 +68,9 @@ func main() {
 	authGroup.Post("/register", h.AuthRegister)
 	authGroup.Post("/login", h.AuthLogin)
 	authGroup.Post("/verify", h.AuthVerify)
+	authGroup.Post("/admin-login", h.AdminLogin)
+	authGroup.Post("/forgot-password", h.ForgotPassword)
+	authGroup.Post("/reset-password", h.ResetPassword)
 
 	// Protected Routes (Requires valid JWT)
 	protected := api.Group("/", middleware.Protected(cfg))
@@ -73,6 +79,8 @@ func main() {
 	protected.Get("/my-reports", h.GetMyReports)
 	protected.Post("/reports", h.CreateReport)
 	protected.Get("/leaderboard", h.GetLeaderboard)
+	protected.Get("/profile", h.GetProfile)
+	protected.Put("/profile", h.UpdateProfile)
 
 	// Admin Routes (Requires 'admin' role)
 	adminGroup := protected.Group("/admin", middleware.AdminOnly(repo))
