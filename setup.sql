@@ -7,6 +7,8 @@ CREATE TABLE IF NOT EXISTS public.profiles (
     email TEXT UNIQUE NOT NULL,
     points INTEGER DEFAULT 0,
     role TEXT DEFAULT 'USER' CHECK (role IN ('USER', 'admin')),
+    full_name TEXT,
+    phone TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -19,6 +21,9 @@ CREATE TABLE IF NOT EXISTS public.reports (
     phone_number TEXT,
     location GEOGRAPHY(Point, 4326) NOT NULL,
     status TEXT DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'VALID', 'RESOLVED')),
+    latitude DOUBLE PRECISION,
+    longitude DOUBLE PRECISION,
+    location_detail TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -41,3 +46,19 @@ DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
 CREATE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE PROCEDURE public.handle_new_user();
+
+-- Create OTPS Table for registration handoff
+CREATE TABLE IF NOT EXISTS public.otps (
+    email TEXT PRIMARY KEY,
+    code TEXT NOT NULL,
+    name TEXT NOT NULL,
+    password TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Create Forgot Password OTPS Table
+CREATE TABLE IF NOT EXISTS public.forgot_password_otps (
+    email TEXT PRIMARY KEY,
+    code TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
