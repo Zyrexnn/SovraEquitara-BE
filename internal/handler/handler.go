@@ -396,6 +396,18 @@ func (h *Handler) UpdateProfile(c *fiber.Ctx) error {
 }
 
 // ============================================================
+// CATEGORIES
+// ============================================================
+
+func (h *Handler) GetCategories(c *fiber.Ctx) error {
+	categories, err := h.Repo.GetCategories()
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal memuat kategori"})
+	}
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"data": categories})
+}
+
+// ============================================================
 // REPORTS
 // ============================================================
 
@@ -407,15 +419,63 @@ func (h *Handler) CreateReport(c *fiber.Ctx) error {
 	}
 
 	var req model.CreateReportRequest
-	if err := c.BodyParser(&req); err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Bad Request"})
+
+	// Always parse manually for multipart form
+	req.Description = c.FormValue("description")
+	req.LocationDetail = c.FormValue("location_detail")
+
+	catID := c.FormValue("category_id")
+	if catID != "" {
+		var id int
+		fmt.Sscanf(catID, "%d", &id)
+		req.CategoryID = &id
 	}
 
-	if err := h.Repo.CreateReport(profileID, req); err != nil {
+	phone := c.FormValue("phone_number")
+	if phone != "" {
+		req.PhoneNumber = &phone
+	}
+
+	fmt.Sscanf(c.FormValue("latitude"), "%f", &req.Lat)
+	fmt.Sscanf(c.FormValue("longitude"), "%f", &req.Lng)
+
+	if req.Description == "" || req.Lat == 0 || req.Lng == 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Description, latitude, and longitude are required"})
+	}
+	var imageURL *string
+	file, err := c.FormFile("image")
+	if err == nil {
+		// Make sure it's an image
+		if file.Size > 2*1024*1024 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Ukuran gambar maksimal 2MB"})
+		}
+		
+		filename := fmt.Sprintf("%d-%s", time.Now().Unix(), file.Filename)
+		filepath := fmt.Sprintf("./uploads/%s", filename)
+		if err := c.SaveFile(file, filepath); err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal menyimpan gambar"})
+		}
+		url := fmt.Sprintf("/uploads/%s", filename)
+		imageURL = &url
+	}
+
+	report := &model.Report{
+		ProfileID:      profileID,
+		CategoryID:     req.CategoryID,
+		ImageURL:       imageURL,
+		Description:    req.Description,
+		PhoneNumber:    req.PhoneNumber,
+		Latitude:       req.Lat,
+		Longitude:      req.Lng,
+		LocationDetail: req.LocationDetail,
+		Status:         "PENDING",
+	}
+
+	if err := h.Repo.CreateReport(report); err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal mengirim laporan"})
 	}
 
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Laporan berhasil dikirim!"})
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Laporan berhasil dikirim!", "data": report})
 }
 
 func (h *Handler) GetMyReports(c *fiber.Ctx) error {
@@ -435,9 +495,20 @@ func (h *Handler) GetMyReports(c *fiber.Ctx) error {
 
 func (h *Handler) GetAllReports(c *fiber.Ctx) error {
 	statusFilter := c.Query("status")
-	reports, err := h.Repo.GetAllReports(statusFilter)
+	sortBy := c.Query("sort", "recent") // default to recent
+	reports, err := h.Repo.GetAllReports(statusFilter, sortBy)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal memuat laporan"})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"data": reports})
+}
+
+func (h *Handler) GetPublicReports(c *fiber.Ctx) error {
+	sortBy := c.Query("sort", "recent") // default to recent
+	reports, err := h.Repo.GetPublicReports(sortBy)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal memuat laporan publik"})
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{"data": reports})
@@ -469,6 +540,81 @@ func (h *Handler) ResolveReport(c *fiber.Ctx) error {
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Laporan berhasil diselesaikan"})
+}
+
+// ============================================================
+// COMMENTS & VOTES
+// ============================================================
+
+func (h *Handler) AddComment(c *fiber.Ctx) error {
+	userIDStr := c.Locals("userID").(string)
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized"})
+	}
+
+	reportIDStr := c.Params("id")
+	reportID, err := uuid.Parse(reportIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Bad Request"})
+	}
+
+	var req model.CommentRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Data tidak valid"})
+	}
+
+	comment := &model.Comment{
+		ReportID: reportID,
+		UserID:   userID,
+		Content:  req.Content,
+	}
+
+	if err := h.Repo.CreateComment(comment); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal menambahkan komentar"})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Komentar berhasil ditambahkan", "data": comment})
+}
+
+func (h *Handler) GetComments(c *fiber.Ctx) error {
+	reportIDStr := c.Params("id")
+	reportID, err := uuid.Parse(reportIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Bad Request"})
+	}
+
+	comments, err := h.Repo.GetCommentsByReportID(reportID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal memuat komentar"})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"data": comments})
+}
+
+func (h *Handler) VoteReport(c *fiber.Ctx) error {
+	userIDStr := c.Locals("userID").(string)
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized"})
+	}
+
+	reportIDStr := c.Params("id")
+	reportID, err := uuid.Parse(reportIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Bad Request"})
+	}
+
+	var req model.VoteRequest
+	if err := c.BodyParser(&req); err != nil || (req.VoteType != 1 && req.VoteType != -1) {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Vote tidak valid (harus 1 atau -1)"})
+	}
+
+	if err := h.Repo.VoteReport(userID, reportID, req.VoteType); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal memberikan vote"})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Vote berhasil disimpan"})
 }
 
 // ============================================================
