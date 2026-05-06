@@ -18,12 +18,23 @@ type Repository interface {
 	GetProfileByID(id uuid.UUID) (*model.Profile, error)
 	UpdateProfile(id uuid.UUID, req model.UpdateProfileRequest) error
 
+	// Categories
+	GetCategories() ([]model.Category, error)
+
 	// Reports
-	CreateReport(profileID uuid.UUID, req model.CreateReportRequest) error
+	CreateReport(report *model.Report) error
 	GetReportsByProfileID(profileID uuid.UUID) ([]model.Report, error)
-	GetAllReports(statusFilter string) ([]model.Report, error)
+	GetAllReports(statusFilter, sortBy string) ([]model.Report, error)
+	GetPublicReports(sortBy string) ([]model.Report, error)
 	VerifyReport(reportID uuid.UUID) error
 	ResolveReport(reportID uuid.UUID) error
+
+	// Comments
+	CreateComment(comment *model.Comment) error
+	GetCommentsByReportID(reportID uuid.UUID) ([]model.Comment, error)
+
+	// Votes
+	VoteReport(userID, reportID uuid.UUID, voteType int) error
 
 	// Leaderboard
 	GetLeaderboard() ([]model.Profile, error)
@@ -85,39 +96,81 @@ func (r *repository) UpdatePasswordByEmail(email, passwordHash string) error {
 }
 
 // ============================================================
+// CATEGORIES
+// ============================================================
+
+func (r *repository) GetCategories() ([]model.Category, error) {
+	var categories []model.Category
+	err := r.db.Find(&categories).Error
+	return categories, err
+}
+
+// ============================================================
 // REPORTS
 // ============================================================
 
-func (r *repository) CreateReport(profileID uuid.UUID, req model.CreateReportRequest) error {
-	query := `INSERT INTO reports (profile_id, description, phone_number, latitude, longitude, location_detail) 
-			  VALUES ($1, $2, $3, $4, $5, $6)`
-	return r.db.Exec(query, profileID, req.Description, req.PhoneNumber, req.Lat, req.Lng, req.LocationDetail).Error
+func (r *repository) CreateReport(report *model.Report) error {
+	query := `INSERT INTO reports (profile_id, category_id, image_url, description, phone_number, latitude, longitude, location_detail) 
+			  VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, created_at, updated_at`
+	return r.db.Raw(query, report.ProfileID, report.CategoryID, report.ImageURL, report.Description, report.PhoneNumber, report.Latitude, report.Longitude, report.LocationDetail).Scan(report).Error
 }
 
 func (r *repository) GetReportsByProfileID(profileID uuid.UUID) ([]model.Report, error) {
 	var reports []model.Report
-	query := `SELECT id, profile_id, description, phone_number, 
-			  latitude, longitude, location_detail,
+	query := `SELECT id, profile_id, category_id, image_url, description, phone_number, 
+			  latitude, longitude, location_detail, vote_count, comment_count,
 			  status, created_at, updated_at 
 			  FROM reports WHERE profile_id = $1 ORDER BY created_at DESC`
 	err := r.db.Raw(query, profileID).Scan(&reports).Error
 	return reports, err
 }
 
-func (r *repository) GetAllReports(statusFilter string) ([]model.Report, error) {
+func (r *repository) GetAllReports(statusFilter, sortBy string) ([]model.Report, error) {
 	var reports []model.Report
+	
+	orderClause := "created_at DESC"
+	switch sortBy {
+	case "votes":
+		orderClause = "vote_count DESC, created_at DESC"
+	case "comments":
+		orderClause = "comment_count DESC, created_at DESC"
+	case "category":
+		orderClause = "category_id ASC, created_at DESC"
+	}
+
 	if statusFilter != "" {
-		query := `SELECT id, profile_id, description, phone_number, 
-				  latitude, longitude, location_detail,
+		query := `SELECT id, profile_id, category_id, image_url, description, phone_number, 
+				  latitude, longitude, location_detail, vote_count, comment_count,
 				  status, created_at, updated_at 
-				  FROM reports WHERE status = $1 ORDER BY created_at DESC`
+				  FROM reports WHERE status = $1 ORDER BY ` + orderClause
 		err := r.db.Raw(query, statusFilter).Scan(&reports).Error
 		return reports, err
 	}
-	query := `SELECT id, profile_id, description, phone_number, 
-			  latitude, longitude, location_detail,
+	query := `SELECT id, profile_id, category_id, image_url, description, phone_number, 
+			  latitude, longitude, location_detail, vote_count, comment_count,
 			  status, created_at, updated_at 
-			  FROM reports ORDER BY created_at DESC`
+			  FROM reports ORDER BY ` + orderClause
+	err := r.db.Raw(query).Scan(&reports).Error
+	return reports, err
+}
+
+func (r *repository) GetPublicReports(sortBy string) ([]model.Report, error) {
+	var reports []model.Report
+	
+	orderClause := "created_at DESC"
+	switch sortBy {
+	case "votes":
+		orderClause = "vote_count DESC, created_at DESC"
+	case "comments":
+		orderClause = "comment_count DESC, created_at DESC"
+	case "category":
+		orderClause = "category_id ASC, created_at DESC"
+	}
+
+	query := `SELECT id, profile_id, category_id, image_url, description, phone_number, 
+			  latitude, longitude, location_detail, vote_count, comment_count,
+			  status, created_at, updated_at 
+			  FROM reports WHERE status IN ('VALID', 'RESOLVED') ORDER BY ` + orderClause
 	err := r.db.Raw(query).Scan(&reports).Error
 	return reports, err
 }
@@ -161,6 +214,78 @@ func (r *repository) ResolveReport(reportID uuid.UUID) error {
 		}
 
 		if err := tx.Model(&model.Profile{}).Where("id = ?", report.ProfileID).Update("points", gorm.Expr("points + ?", 50)).Error; err != nil {
+			return err
+		}
+
+		return nil
+	})
+}
+
+// ============================================================
+// COMMENTS
+// ============================================================
+
+func (r *repository) CreateComment(comment *model.Comment) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		// Insert comment
+		query := `INSERT INTO comments (report_id, user_id, content) VALUES ($1, $2, $3) RETURNING id, created_at`
+		if err := tx.Raw(query, comment.ReportID, comment.UserID, comment.Content).Scan(comment).Error; err != nil {
+			return err
+		}
+
+		// Update comment count on report
+		if err := tx.Model(&model.Report{}).Where("id = ?", comment.ReportID).UpdateColumn("comment_count", gorm.Expr("comment_count + ?", 1)).Error; err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
+func (r *repository) GetCommentsByReportID(reportID uuid.UUID) ([]model.Comment, error) {
+	var comments []model.Comment
+	// We want to include user info ideally, but for now just the comments
+	err := r.db.Preload("User").Where("report_id = ?", reportID).Order("created_at ASC").Find(&comments).Error
+	return comments, err
+}
+
+// ============================================================
+// VOTES
+// ============================================================
+
+func (r *repository) VoteReport(userID, reportID uuid.UUID, voteType int) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		var existingVote model.Vote
+		err := tx.Where("user_id = ? AND report_id = ?", userID, reportID).First(&existingVote).Error
+
+		voteDiff := 0
+		if err == gorm.ErrRecordNotFound {
+			// New vote
+			newVote := model.Vote{UserID: userID, ReportID: reportID, VoteType: voteType}
+			if err := tx.Create(&newVote).Error; err != nil {
+				return err
+			}
+			voteDiff = voteType
+		} else if err == nil {
+			// Existing vote
+			if existingVote.VoteType == voteType {
+				// Remove vote
+				if err := tx.Delete(&existingVote).Error; err != nil {
+					return err
+				}
+				voteDiff = -voteType
+			} else {
+				// Change vote (e.g., from -1 to 1 means +2)
+				if err := tx.Model(&existingVote).Update("vote_type", voteType).Error; err != nil {
+					return err
+				}
+				voteDiff = voteType * 2
+			}
+		} else {
+			return err
+		}
+
+		// Update report vote_count
+		if err := tx.Model(&model.Report{}).Where("id = ?", reportID).UpdateColumn("vote_count", gorm.Expr("vote_count + ?", voteDiff)).Error; err != nil {
 			return err
 		}
 
