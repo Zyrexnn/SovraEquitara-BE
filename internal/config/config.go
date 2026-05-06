@@ -8,16 +8,21 @@ import (
 )
 
 type Config struct {
-	SupabaseURL       string
-	SupabaseKey       string
-	SupabaseJWTSecret string
-	DatabaseURL       string
-	Port              string
-	SMTPHost          string
-	SMTPPort          string
-	SMTPUser          string
-	SMTPPass          string
-	SMTPFrom          string
+	// Database
+	DatabaseURL string
+
+	// JWT (self-managed, no Supabase dependency)
+	JWTSecret string
+
+	// Server
+	Port string
+
+	// SMTP
+	SMTPHost string
+	SMTPPort string
+	SMTPUser string
+	SMTPPass string
+	SMTPFrom string
 }
 
 func LoadConfig() *Config {
@@ -31,16 +36,29 @@ func LoadConfig() *Config {
 		port = "3000"
 	}
 
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if jwtSecret == "" {
+		jwtSecret = "sovra-equitara-secret-key-change-in-production"
+		log.Println("[WARNING] JWT_SECRET not set, using default. SET THIS IN PRODUCTION!")
+	}
+
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		dbPassword := os.Getenv("DB_PASSWORD")
+		if dbPassword == "" {
+			dbPassword = "password" // fallback
+		}
+		dbURL = "postgresql://postgres:" + dbPassword + "@localhost:5432/sovra_equitara?sslmode=disable"
+	}
+
 	return &Config{
-		SupabaseURL:       os.Getenv("SUPABASE_URL"),
-		SupabaseKey:       os.Getenv("SUPABASE_KEY"),
-		SupabaseJWTSecret: os.Getenv("SUPABASE_JWT_SECRET"),
-		DatabaseURL:       os.Getenv("DATABASE_URL"),
-		Port:              port,
-		SMTPHost:          os.Getenv("SMTP_HOST"),
-		SMTPPort:          os.Getenv("SMTP_PORT"),
-		SMTPUser:          os.Getenv("SMTP_USER"),
-		SMTPPass:          os.Getenv("SMTP_PASS"),
-		SMTPFrom:          os.Getenv("SMTP_FROM"),
+		DatabaseURL: dbURL,
+		JWTSecret:   jwtSecret,
+		Port:        port,
+		SMTPHost:    os.Getenv("SMTP_HOST"),
+		SMTPPort:    os.Getenv("SMTP_PORT"),
+		SMTPUser:    os.Getenv("SMTP_USER"),
+		SMTPPass:    os.Getenv("SMTP_PASS"),
+		SMTPFrom:    os.Getenv("SMTP_FROM"),
 	}
 }
