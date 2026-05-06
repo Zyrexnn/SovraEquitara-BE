@@ -57,6 +57,9 @@ func main() {
 		AllowMethods: "GET, POST, HEAD, PUT, DELETE, PATCH",
 	}))
 
+	// Serve static files for image uploads
+	app.Static("/uploads", "./uploads")
+
 	// Health check
 	app.Get("/health", func(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusOK).JSON(fiber.Map{"status": "ok"})
@@ -74,12 +77,19 @@ func main() {
 	authGroup.Post("/forgot-password", h.ForgotPassword)
 	authGroup.Post("/reset-password", h.ResetPassword)
 
+	// Public Routes (Data)
+	api.Get("/categories", h.GetCategories)
+	api.Get("/public-reports", h.GetPublicReports)
+	api.Get("/reports/:id/comments", h.GetComments)
+
 	// Protected Routes (Requires valid JWT)
 	protected := api.Group("/", middleware.Protected(cfg))
 
 	// User Routes
 	protected.Get("/my-reports", h.GetMyReports)
 	protected.Post("/reports", h.CreateReport)
+	protected.Post("/reports/:id/comments", h.AddComment)
+	protected.Post("/reports/:id/vote", h.VoteReport)
 	protected.Get("/leaderboard", h.GetLeaderboard)
 	protected.Get("/profile", h.GetProfile)
 	protected.Put("/profile", h.UpdateProfile)
