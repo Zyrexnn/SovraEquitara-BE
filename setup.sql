@@ -24,25 +24,72 @@ CREATE INDEX IF NOT EXISTS idx_profiles_email ON profiles(email);
 CREATE INDEX IF NOT EXISTS idx_profiles_points ON profiles(points DESC);
 
 -- ============================================================
+-- CATEGORIES TABLE
+-- ============================================================
+CREATE TABLE IF NOT EXISTS categories (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    slug TEXT NOT NULL UNIQUE
+);
+
+-- Populate initial categories
+INSERT INTO categories (name, slug) VALUES 
+('Infrastruktur', 'infrastruktur'),
+('Lingkungan', 'lingkungan'),
+('Fasilitas Umum', 'fasilitas-umum'),
+('Keamanan', 'keamanan') ON CONFLICT DO NOTHING;
+
+-- ============================================================
 -- REPORTS TABLE
 -- ============================================================
 CREATE TABLE IF NOT EXISTS reports (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     profile_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    category_id INTEGER REFERENCES categories(id),
+    image_url TEXT,
     description TEXT NOT NULL,
     phone_number TEXT,
     latitude DOUBLE PRECISION NOT NULL,
     longitude DOUBLE PRECISION NOT NULL,
     location_detail TEXT DEFAULT '',
+    vote_count INTEGER NOT NULL DEFAULT 0,
+    comment_count INTEGER NOT NULL DEFAULT 0,
     status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'VALID', 'RESOLVED')),
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
+-- ALTER TABLE untuk memastikan kolom-kolom baru ditambahkan jika tabel reports sudah ada
+ALTER TABLE reports ADD COLUMN IF NOT EXISTS category_id INTEGER REFERENCES categories(id);
+ALTER TABLE reports ADD COLUMN IF NOT EXISTS image_url TEXT;
+ALTER TABLE reports ADD COLUMN IF NOT EXISTS vote_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE reports ADD COLUMN IF NOT EXISTS comment_count INTEGER NOT NULL DEFAULT 0;
+
 -- Index for filtering by profile
 CREATE INDEX IF NOT EXISTS idx_reports_profile_id ON reports(profile_id);
 -- Index for filtering by status
 CREATE INDEX IF NOT EXISTS idx_reports_status ON reports(status);
+
+-- ============================================================
+-- COMMENTS TABLE
+-- ============================================================
+CREATE TABLE IF NOT EXISTS comments (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    report_id UUID NOT NULL REFERENCES reports(id) ON DELETE CASCADE,
+    user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    content TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+-- ============================================================
+-- VOTES TABLE
+-- ============================================================
+CREATE TABLE IF NOT EXISTS votes (
+    user_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    report_id UUID NOT NULL REFERENCES reports(id) ON DELETE CASCADE,
+    vote_type INTEGER NOT NULL CHECK (vote_type IN (1, -1)),
+    PRIMARY KEY (user_id, report_id)
+);
 
 -- ============================================================
 -- OTP TABLE (Registration handoff)
