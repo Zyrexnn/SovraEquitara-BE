@@ -5,12 +5,18 @@ services:
     image: postgis/postgis:15-3.3
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: postgres
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-password}
+      POSTGRES_DB: sovra_equitara
     ports:
       - "5432:5432"
     volumes:
       - db_data:/var/lib/postgresql/data
+      - ./setup.sql:/docker-entrypoint-initdb.d/01-setup.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d sovra_equitara"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   api:
     build: .
@@ -18,9 +24,11 @@ services:
       - "3000:3000"
     environment:
       - PORT=3000
-      - DATABASE_URL=postgres://postgres:password@db:5432/postgres?sslmode=disable
+      - DATABASE_URL=postgresql://postgres:${DB_PASSWORD:-password}@db:5432/sovra_equitara?sslmode=disable
+      - JWT_SECRET=${JWT_SECRET:-sovra-equitara-secret-key-change-in-production}
     depends_on:
-      - db
+      db:
+        condition: service_healthy
 
 volumes:
   db_data:

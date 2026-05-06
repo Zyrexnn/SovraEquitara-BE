@@ -20,14 +20,16 @@ func main() {
 	// Load Configuration
 	cfg := config.LoadConfig()
 
-	// Initialize Database with PreferSimpleProtocol for Supabase Pooler compatibility
+	// Initialize Database — Native PostgreSQL (no Supabase)
 	db, err := gorm.Open(postgres.New(postgres.Config{
 		DSN:                  cfg.DatabaseURL,
-		PreferSimpleProtocol: true, // WAJIB untuk Supabase Pooler (Port 6543)
+		PreferSimpleProtocol: true, // Disable prepared statements for pgbouncer compatibility
 	}), &gorm.Config{})
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
 	}
+
+	log.Println("Database connected successfully!")
 
 	// Initialize Repository and Handler
 	repo := repository.NewRepository(db)

@@ -1,64 +1,100 @@
--- Enable PostGIS extension for Geo-location
-CREATE EXTENSION IF NOT EXISTS postgis;
+-- ============================================================
+-- SovraEquitara — Native PostgreSQL Schema
+-- Migrasi dari Supabase ke PostgreSQL (Docker)
+-- ============================================================
 
--- Create Profiles Table (extends Supabase Auth)
-CREATE TABLE IF NOT EXISTS public.profiles (
-    id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
+-- ============================================================
+-- PROFILES TABLE (Self-managed auth, no Supabase dependency)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS profiles (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     email TEXT UNIQUE NOT NULL,
-    points INTEGER DEFAULT 0,
-    role TEXT DEFAULT 'USER' CHECK (role IN ('USER', 'admin')),
-    full_name TEXT,
-    phone TEXT,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    password_hash TEXT NOT NULL,
+    full_name TEXT NOT NULL DEFAULT '',
+    phone TEXT DEFAULT '',
+    points INTEGER NOT NULL DEFAULT 0,
+    role TEXT NOT NULL DEFAULT 'USER' CHECK (role IN ('USER', 'admin')),
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
--- Create Reports Table
-CREATE TABLE IF NOT EXISTS public.reports (
+-- Index for fast email lookups during login/register
+CREATE INDEX IF NOT EXISTS idx_profiles_email ON profiles(email);
+-- Index for leaderboard queries
+CREATE INDEX IF NOT EXISTS idx_profiles_points ON profiles(points DESC);
+
+-- ============================================================
+-- REPORTS TABLE
+-- ============================================================
+CREATE TABLE IF NOT EXISTS reports (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    profile_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE,
+    profile_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
     description TEXT NOT NULL,
     phone_number TEXT,
-    location GEOGRAPHY(Point, 4326) NOT NULL,
-    status TEXT DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'VALID', 'RESOLVED')),
-    latitude DOUBLE PRECISION,
-    longitude DOUBLE PRECISION,
-    location_detail TEXT,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    latitude DOUBLE PRECISION NOT NULL,
+    longitude DOUBLE PRECISION NOT NULL,
+    location_detail TEXT DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'VALID', 'RESOLVED')),
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
--- Index for spatial queries
-CREATE INDEX IF NOT EXISTS reports_location_idx ON public.reports USING GIST(location);
+-- Index for filtering by profile
+CREATE INDEX IF NOT EXISTS idx_reports_profile_id ON reports(profile_id);
+-- Index for filtering by status
+CREATE INDEX IF NOT EXISTS idx_reports_status ON reports(status);
 
--- Function to handle user creation from Supabase Auth
-CREATE OR REPLACE FUNCTION public.handle_new_user() 
-RETURNS TRIGGER AS $$
-BEGIN
-  INSERT INTO public.profiles (id, email, role)
-  VALUES (new.id, new.email, 'USER');
-  RETURN new;
-END;
-$$ LANGUAGE plpgsql SECURITY DEFINER;
-
--- Trigger to automatically create a user record when they sign up
-DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
-CREATE TRIGGER on_auth_user_created
-  AFTER INSERT ON auth.users
-  FOR EACH ROW EXECUTE PROCEDURE public.handle_new_user();
-
--- Create OTPS Table for registration handoff
-CREATE TABLE IF NOT EXISTS public.otps (
+-- ============================================================
+-- OTP TABLE (Registration handoff)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS otps (
     email TEXT PRIMARY KEY,
     code TEXT NOT NULL,
     name TEXT NOT NULL,
-    password TEXT NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    password_hash TEXT NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
--- Create Forgot Password OTPS Table
-CREATE TABLE IF NOT EXISTS public.forgot_password_otps (
+-- ============================================================
+-- FORGOT PASSWORD OTP TABLE
+-- ============================================================
+CREATE TABLE IF NOT EXISTS forgot_password_otps (
     email TEXT PRIMARY KEY,
     code TEXT NOT NULL,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
+
+-- ============================================================
+-- AUTO-UPDATE updated_at TRIGGER
+-- ============================================================
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Apply trigger to profiles
+DROP TRIGGER IF EXISTS trigger_profiles_updated_at ON profiles;
+CREATE TRIGGER trigger_profiles_updated_at
+    BEFORE UPDATE ON profiles
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Apply trigger to reports
+DROP TRIGGER IF EXISTS trigger_reports_updated_at ON reports;
+CREATE TRIGGER trigger_reports_updated_at
+    BEFORE UPDATE ON reports
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- ============================================================
+-- AUTO-CLEANUP EXPIRED OTPs (older than 10 minutes)
+-- Can be called periodically or before each verification
+-- ============================================================
+CREATE OR REPLACE FUNCTION cleanup_expired_otps()
+RETURNS void AS $$
+BEGIN
+    DELETE FROM otps WHERE created_at < NOW() - INTERVAL '10 minutes';
+    DELETE FROM forgot_password_otps WHERE created_at < NOW() - INTERVAL '10 minutes';
+END;
+$$ LANGUAGE plpgsql;
