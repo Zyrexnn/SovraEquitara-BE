@@ -624,8 +624,25 @@ func (h *Handler) VoteReport(c *fiber.Ctx) error {
 func (h *Handler) GetLeaderboard(c *fiber.Ctx) error {
 	profiles, err := h.Repo.GetLeaderboard()
 	if err != nil {
+		log.Printf("[ERROR] Gagal memuat leaderboard: %v\n", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal memuat papan peringkat"})
 	}
 
+	log.Printf("[INFO] Leaderboard diakses, ditemukan %d warga\n", len(profiles))
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{"data": profiles})
+}
+
+func (h *Handler) GetReportStats(c *fiber.Ctx) error {
+	userIDStr := c.Locals("userID").(string)
+	profileID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized"})
+	}
+
+	stats, err := h.Repo.GetReportStats(profileID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal memuat statistik"})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"data": stats})
 }

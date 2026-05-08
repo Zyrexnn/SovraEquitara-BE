@@ -28,6 +28,7 @@ type Repository interface {
 	GetPublicReports(sortBy string) ([]model.Report, error)
 	VerifyReport(reportID uuid.UUID) error
 	ResolveReport(reportID uuid.UUID) error
+	GetReportStats(profileID uuid.UUID) (*model.ReportStats, error)
 
 	// Comments
 	CreateComment(comment *model.Comment) error
@@ -221,6 +222,18 @@ func (r *repository) ResolveReport(reportID uuid.UUID) error {
 	})
 }
 
+func (r *repository) GetReportStats(profileID uuid.UUID) (*model.ReportStats, error) {
+	var stats model.ReportStats
+	err := r.db.Model(&model.Report{}).Where("profile_id = ?", profileID).Count(&stats.Total).Error
+	if err != nil { return nil, err }
+	
+	err = r.db.Model(&model.Report{}).Where("profile_id = ? AND status = ?", profileID, "PENDING").Count(&stats.Pending).Error
+	if err != nil { return nil, err }
+	
+	err = r.db.Model(&model.Report{}).Where("profile_id = ? AND status = ?", profileID, "RESOLVED").Count(&stats.Resolved).Error
+	return &stats, err
+}
+
 // ============================================================
 // COMMENTS
 // ============================================================
@@ -299,7 +312,7 @@ func (r *repository) VoteReport(userID, reportID uuid.UUID, voteType int) error 
 
 func (r *repository) GetLeaderboard() ([]model.Profile, error) {
 	var profiles []model.Profile
-	err := r.db.Order("points desc").Limit(10).Find(&profiles).Error
+	err := r.db.Where("role = ? AND points > 0", "USER").Order("points desc").Limit(10).Find(&profiles).Error
 	return profiles, err
 }
 
