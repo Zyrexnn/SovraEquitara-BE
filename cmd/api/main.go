@@ -81,6 +81,7 @@ func main() {
 	api.Get("/categories", h.GetCategories)
 	api.Get("/public-reports", h.GetPublicReports)
 	api.Get("/reports/:id/comments", h.GetComments)
+	api.Get("/leaderboard", h.GetLeaderboard)
 
 	// Protected Routes (Requires valid JWT)
 	protected := api.Group("/", middleware.Protected(cfg))
@@ -90,7 +91,7 @@ func main() {
 	protected.Post("/reports", h.CreateReport)
 	protected.Post("/reports/:id/comments", h.AddComment)
 	protected.Post("/reports/:id/vote", h.VoteReport)
-	protected.Get("/leaderboard", h.GetLeaderboard)
+	protected.Get("/reports/stats", h.GetReportStats)
 	protected.Get("/profile", h.GetProfile)
 	protected.Put("/profile", h.UpdateProfile)
 

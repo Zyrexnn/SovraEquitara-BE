@@ -100,3 +100,9 @@ type VoteRequest struct {
 type CommentRequest struct {
 	Content string `json:"content" validate:"required"`
 }
+
+type ReportStats struct {
+	Total    int64 `json:"total"`
+	Pending  int64 `json:"pending"`
+	Resolved int64 `json:"resolved"`
+}
