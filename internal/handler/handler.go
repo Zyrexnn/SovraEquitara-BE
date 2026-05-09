@@ -54,7 +54,13 @@ func (h *Handler) generateJWT(userID string, role string) (string, error) {
 		"exp":  time.Now().Add(72 * time.Hour).Unix(), // 3 days
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString([]byte(h.Config.JWTSecret))
+	secret := h.Config.JWTSecret
+	if len(secret) > 5 {
+		fmt.Printf("JWT Debug - Signing with secret: %s...\n", secret[:5])
+	} else {
+		fmt.Printf("JWT Debug - Signing with short secret\n")
+	}
+	return token.SignedString([]byte(secret))
 }
 
 func generateOTP() string {
