@@ -333,7 +333,7 @@ func (h *Handler) ResetPassword(c *fiber.Ctx) error {
 // ============================================================
 
 type AdminLoginReq struct {
-	Username string `json:"username"`
+	Email    string `json:"email"`
 	Password string `json:"password"`
 }
 
@@ -343,24 +343,34 @@ func (h *Handler) AdminLogin(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request"})
 	}
 
-	if req.Username == "ikhsan" && req.Password == "0721" {
-		tokenString, err := h.generateJWT("admin-ikhsan", "admin")
-		if err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Could not login admin"})
-		}
-
-		return c.Status(fiber.StatusOK).JSON(fiber.Map{
-			"message":      "Admin login successful",
-			"access_token": tokenString,
-			"user": map[string]interface{}{
-				"id":    "admin-ikhsan",
-				"email": "ikhsan@admin.com",
-				"role":  "admin",
-			},
-		})
+	profile, err := h.Repo.GetProfileByEmail(req.Email)
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Email atau password admin salah!"})
 	}
 
-	return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Username atau Password Admin salah!"})
+	if profile.Role != "admin" {
+		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Akses ditolak: Anda bukan admin!"})
+	}
+
+	if !checkPassword(req.Password, profile.PasswordHash) {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Email atau password admin salah!"})
+	}
+
+	tokenString, err := h.generateJWT(profile.ID.String(), profile.Role)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal membuat sesi login admin"})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"message":      "Admin login successful",
+		"access_token": tokenString,
+		"user": map[string]interface{}{
+			"id":        profile.ID.String(),
+			"email":     profile.Email,
+			"full_name": profile.FullName,
+			"role":      profile.Role,
+		},
+	})
 }
 
 // ============================================================

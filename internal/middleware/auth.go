@@ -63,11 +63,6 @@ func AdminOnly(repo repository.Repository) fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		userIDStr := c.Locals("userID").(string)
 
-		// Hardcoded Admin Bypass
-		if userIDStr == "admin-ikhsan" {
-			return c.Next()
-		}
-
 		userID, err := uuid.Parse(userIDStr)
 		if err != nil {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized: Invalid User ID format"})
