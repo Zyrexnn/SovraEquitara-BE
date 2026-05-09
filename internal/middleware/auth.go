@@ -20,17 +20,27 @@ func Protected(cfg *config.Config) fiber.Handler {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized: Missing or invalid token format"})
 		}
 
-		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+		tokenString := strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer"))
 
 		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 			}
-			return []byte(cfg.JWTSecret), nil
+			secret := cfg.JWTSecret
+			if len(secret) > 5 {
+				fmt.Printf("JWT Debug - Verifying with secret: %s...\n", secret[:5])
+			} else {
+				fmt.Printf("JWT Debug - Verifying with short secret\n")
+			}	
+			return []byte(secret), nil
 		})
 
 		if err != nil || !token.Valid {
-			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized: Token tidak valid. Silakan login ulang."})
+			fmt.Printf("JWT Debug - Token: [%s], Error: %v\n", tokenString, err)
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
+				"error": "Unauthorized: Token tidak valid.",
+				"debug_error": fmt.Sprintf("%v", err),
+			})
 		}
 
 		claims, ok := token.Claims.(jwt.MapClaims)
