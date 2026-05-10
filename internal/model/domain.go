@@ -106,3 +106,8 @@ type ReportStats struct {
 	Pending  int64 `json:"pending"`
 	Resolved int64 `json:"resolved"`
 }
+
+type AIAssistantRequest struct {
+	Query string `json:"query"`
+	Model string `json:"model"` // "local" or "gemini"
+}
