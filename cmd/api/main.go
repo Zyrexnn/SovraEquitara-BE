@@ -100,6 +100,7 @@ func main() {
 	adminGroup.Get("/reports", h.GetAllReports)
 	adminGroup.Patch("/reports/:id/verify", h.VerifyReport)
 	adminGroup.Patch("/reports/:id/resolve", h.ResolveReport)
+	adminGroup.Post("/ai-assistant", h.AIAssistant)
 
 	// Start server
 	log.Printf("Server starting on port %s", cfg.Port)
