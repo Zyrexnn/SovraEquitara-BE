@@ -23,6 +23,9 @@ type Config struct {
 	SMTPUser string
 	SMTPPass string
 	SMTPFrom string
+
+	// AI APIs
+	GeminiAPIKey string
 }
 
 func LoadConfig() *Config {
@@ -60,5 +63,6 @@ func LoadConfig() *Config {
 		SMTPUser:    os.Getenv("SMTP_USER"),
 		SMTPPass:    os.Getenv("SMTP_PASS"),
 		SMTPFrom:    os.Getenv("SMTP_FROM"),
+		GeminiAPIKey: os.Getenv("GEMINI_API_KEY"),
 	}
 }
