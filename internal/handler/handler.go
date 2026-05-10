@@ -6,6 +6,9 @@ import (
 	"math/rand"
 	"net/smtp"
 	"time"
+	"bytes"
+	"encoding/json"
+	"net/http"
 
 	"sovraequitara-be/internal/config"
 	"sovraequitara-be/internal/model"
@@ -661,4 +664,129 @@ func (h *Handler) GetReportStats(c *fiber.Ctx) error {
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{"data": stats})
+}
+
+// ============================================================
+// AI ASSISTANT
+// ============================================================
+
+type GeminiRequest struct {
+	Contents          []GeminiContent `json:"contents"`
+	SystemInstruction *GeminiSystem   `json:"system_instruction,omitempty"`
+}
+
+type GeminiContent struct {
+	Role  string       `json:"role"`
+	Parts []GeminiPart `json:"parts"`
+}
+
+type GeminiPart struct {
+	Text string `json:"text"`
+}
+
+type GeminiSystem struct {
+	Parts []GeminiPart `json:"parts"`
+}
+
+type LocalChatRequest struct {
+	Model    string         `json:"model"`
+	Messages []LocalMessage `json:"messages"`
+}
+
+type LocalMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+func (h *Handler) AIAssistant(c *fiber.Ctx) error {
+	var req model.AIAssistantRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request"})
+	}
+
+	// Fetch some context from DB
+	reports, _ := h.Repo.GetAllReports("", "recent")
+	var contextStr string
+	for i, r := range reports {
+		if i >= 10 { // Limit context to latest 10 reports
+			break
+		}
+		contextStr += fmt.Sprintf("Report ID: %s, Category: %v, Description: %s, Status: %s, Location: %s\n", r.ID, r.CategoryID, r.Description, r.Status, r.LocationDetail)
+	}
+	systemPrompt := "You are an AI Assistant for the SovraEquitara admin dashboard. Your role is to help the admin manage the platform, analyze reports, and give actionable advice based on the provided data. When you reference a report, ALWAYS include a detail button using this exact format: [DETAIL_BTN:the-report-id]. Here are the recent reports:\n" + contextStr
+
+	if req.Model == "local" {
+		// LM Studio
+		payload := LocalChatRequest{
+			Model: "qwen2.5-vl-3b-instruct",
+			Messages: []LocalMessage{
+				{Role: "system", Content: systemPrompt},
+				{Role: "user", Content: req.Query},
+			},
+		}
+		body, _ := json.Marshal(payload)
+
+		resp, err := http.Post("http://127.0.0.1:1234/v1/chat/completions", "application/json", bytes.NewBuffer(body))
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Local AI is unreachable"})
+		}
+		defer resp.Body.Close()
+
+		var res map[string]interface{}
+		json.NewDecoder(resp.Body).Decode(&res)
+
+		choices, ok := res["choices"].([]interface{})
+		if !ok || len(choices) == 0 {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Invalid local AI response"})
+		}
+
+		choice := choices[0].(map[string]interface{})
+		message := choice["message"].(map[string]interface{})
+		content := message["content"].(string)
+
+		return c.Status(fiber.StatusOK).JSON(fiber.Map{"response": content})
+
+	} else {
+		// Gemini
+		apiKey := h.Config.GeminiAPIKey
+		if apiKey == "" {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gemini API key is not configured"})
+		}
+		url := "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + apiKey
+
+		payload := GeminiRequest{
+			SystemInstruction: &GeminiSystem{
+				Parts: []GeminiPart{{Text: systemPrompt}},
+			},
+			Contents: []GeminiContent{
+				{
+					Role: "user",
+					Parts: []GeminiPart{{Text: req.Query}},
+				},
+			},
+		}
+
+		body, _ := json.Marshal(payload)
+		resp, err := http.Post(url, "application/json", bytes.NewBuffer(body))
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gemini API is unreachable"})
+		}
+		defer resp.Body.Close()
+
+		var res map[string]interface{}
+		json.NewDecoder(resp.Body).Decode(&res)
+
+		candidates, ok := res["candidates"].([]interface{})
+		if !ok || len(candidates) == 0 {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Invalid Gemini response"})
+		}
+
+		candidate := candidates[0].(map[string]interface{})
+		contentObj := candidate["content"].(map[string]interface{})
+		parts := contentObj["parts"].([]interface{})
+		firstPart := parts[0].(map[string]interface{})
+		content := firstPart["text"].(string)
+
+		return c.Status(fiber.StatusOK).JSON(fiber.Map{"response": content})
+	}
 }
