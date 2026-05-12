@@ -512,6 +512,30 @@ func (h *Handler) GetMyReports(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{"data": reports})
 }
 
+func (h *Handler) DeleteReport(c *fiber.Ctx) error {
+	userIDStr := c.Locals("userID").(string)
+	profileID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized"})
+	}
+
+	reportIDStr := c.Params("id")
+	reportID, err := uuid.Parse(reportIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "ID laporan tidak valid"})
+	}
+
+	err = h.Repo.DeleteReport(reportID, profileID)
+	if err != nil {
+		if err.Error() == "record not found" {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Laporan tidak ditemukan atau Anda tidak memiliki akses"})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal menghapus laporan"})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Laporan berhasil dihapus"})
+}
+
 func (h *Handler) GetAllReports(c *fiber.Ctx) error {
 	statusFilter := c.Query("status")
 	sortBy := c.Query("sort", "recent") // default to recent
