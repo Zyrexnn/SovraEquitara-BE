@@ -89,6 +89,7 @@ func main() {
 	// User Routes
 	protected.Get("/my-reports", h.GetMyReports)
 	protected.Post("/reports", h.CreateReport)
+	protected.Delete("/reports/:id", h.DeleteReport)
 	protected.Post("/reports/:id/comments", h.AddComment)
 	protected.Post("/reports/:id/vote", h.VoteReport)
 	protected.Get("/reports/stats", h.GetReportStats)
