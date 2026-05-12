@@ -713,7 +713,13 @@ func (h *Handler) AIAssistant(c *fiber.Ctx) error {
 		}
 		contextStr += fmt.Sprintf("Report ID: %s, Category: %v, Description: %s, Status: %s, Location: %s\n", r.ID, r.CategoryID, r.Description, r.Status, r.LocationDetail)
 	}
-	systemPrompt := "You are an AI Assistant for the SovraEquitara admin dashboard. Your role is to help the admin manage the platform, analyze reports, and give actionable advice based on the provided data. When you reference a report, ALWAYS include a detail button using this exact format: [DETAIL_BTN:the-report-id]. Here are the recent reports:\n" + contextStr
+	systemPrompt := `You are an AI Assistant for the SovraEquitara platform admin dashboard. 
+SovraEquitara is a citizen reporting platform that aims to resolve issues efficiently.
+Your role is to help the admin manage the platform, analyze reports, and give actionable advice based on the provided data.
+IMPORTANT: You must ONLY answer questions related to SovraEquitara, the provided reports, or administrative tasks on this platform. If the admin asks something entirely irrelevant, you MUST decline politely and state that you are the SovraEquitara AI Assistant and can only assist with platform-related matters.
+When you reference a report, ALWAYS include a detail button using this exact format: [DETAIL_BTN:the-report-id].
+Here are the recent reports:
+` + contextStr
 
 	if req.Model == "local" {
 		// LM Studio
