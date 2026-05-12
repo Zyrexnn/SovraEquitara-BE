@@ -29,6 +29,7 @@ type Repository interface {
 	VerifyReport(reportID uuid.UUID) error
 	ResolveReport(reportID uuid.UUID) error
 	GetReportStats(profileID uuid.UUID) (*model.ReportStats, error)
+	DeleteReport(reportID, profileID uuid.UUID) error
 
 	// Comments
 	CreateComment(comment *model.Comment) error
@@ -232,6 +233,17 @@ func (r *repository) GetReportStats(profileID uuid.UUID) (*model.ReportStats, er
 	
 	err = r.db.Model(&model.Report{}).Where("profile_id = ? AND status = ?", profileID, "RESOLVED").Count(&stats.Resolved).Error
 	return &stats, err
+}
+
+func (r *repository) DeleteReport(reportID, profileID uuid.UUID) error {
+	res := r.db.Where("id = ? AND profile_id = ?", reportID, profileID).Delete(&model.Report{})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
 }
 
 // ============================================================
