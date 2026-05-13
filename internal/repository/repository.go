@@ -57,6 +57,17 @@ type Repository interface {
 	SaveForgotPasswordOTP(email, code string) error
 	VerifyForgotPasswordOTP(email, code string) error
 	DeleteForgotPasswordOTP(email string) error
+
+	// Chat
+	GetOrCreateConversation(participantID uuid.UUID) (*model.Conversation, error)
+	SendMessage(msg *model.Message) error
+	UpdateConversationLastMessage(conversationID uuid.UUID, content string, incrementUnread bool) error
+	GetMessagesByConversationID(conversationID uuid.UUID) ([]model.Message, error)
+	GetAllConversations(roleFilter string) ([]model.Conversation, error)
+	MarkConversationAsRead(conversationID uuid.UUID) error
+
+	// Profile Listing
+	GetAllProfiles() ([]model.Profile, error)
 }
 
 type repository struct {
@@ -446,4 +457,70 @@ func (r *repository) UpdateAdmin(id uuid.UUID, fullName string, passwordHash str
 
 func (r *repository) DeleteAdmin(id uuid.UUID) error {
 	return r.db.Where("id = ? AND role = ?", id, "admin").Delete(&model.Profile{}).Error
+}
+
+// ============================================================
+// CHAT SYSTEM
+// ============================================================
+
+func (r *repository) GetOrCreateConversation(participantID uuid.UUID) (*model.Conversation, error) {
+	var conv model.Conversation
+	err := r.db.Where("participant_id = ?", participantID).First(&conv).Error
+	if err == gorm.ErrRecordNotFound {
+		conv = model.Conversation{ParticipantID: participantID}
+		if err := r.db.Create(&conv).Error; err != nil {
+			return nil, err
+		}
+		return &conv, nil
+	}
+	return &conv, err
+}
+
+func (r *repository) SendMessage(msg *model.Message) error {
+	return r.db.Create(msg).Error
+}
+
+func (r *repository) UpdateConversationLastMessage(conversationID uuid.UUID, content string, incrementUnread bool) error {
+	updates := map[string]interface{}{
+		"last_message":    content,
+		"last_message_at": gorm.Expr("NOW()"),
+	}
+	if incrementUnread {
+		updates["unread_count"] = gorm.Expr("unread_count + 1")
+	}
+	return r.db.Model(&model.Conversation{}).Where("id = ?", conversationID).Updates(updates).Error
+}
+
+func (r *repository) GetMessagesByConversationID(conversationID uuid.UUID) ([]model.Message, error) {
+	var messages []model.Message
+	err := r.db.Preload("Sender").Where("conversation_id = ?", conversationID).Order("created_at ASC").Find(&messages).Error
+	return messages, err
+}
+
+func (r *repository) GetAllConversations(roleFilter string) ([]model.Conversation, error) {
+	var convs []model.Conversation
+	query := r.db.Preload("Participant").Order("last_message_at DESC")
+	if roleFilter != "" {
+		query = query.Joins("JOIN profiles ON profiles.id = conversations.participant_id").Where("profiles.role = ?", roleFilter)
+	}
+	err := query.Find(&convs).Error
+	return convs, err
+}
+
+func (r *repository) MarkConversationAsRead(conversationID uuid.UUID) error {
+	err := r.db.Model(&model.Message{}).Where("conversation_id = ? AND is_read = false", conversationID).Update("is_read", true).Error
+	if err != nil {
+		return err
+	}
+	return r.db.Model(&model.Conversation{}).Where("id = ?", conversationID).Update("unread_count", 0).Error
+}
+
+// ============================================================
+// PROFILE LISTING
+// ============================================================
+
+func (r *repository) GetAllProfiles() ([]model.Profile, error) {
+	var profiles []model.Profile
+	err := r.db.Select("id, email, full_name, phone, points, role, created_at").Order("created_at DESC").Find(&profiles).Error
+	return profiles, err
 }
