@@ -83,6 +83,10 @@ func main() {
 	api.Get("/reports/:id/comments", h.GetComments)
 	api.Get("/leaderboard", h.GetLeaderboard)
 
+	// Profile Listing (Public for profile popup)
+	api.Get("/profiles", h.GetAllProfiles)
+	api.Get("/profiles/:id", h.GetProfileByID)
+
 	// Protected Routes (Requires valid JWT)
 	protected := api.Group("/", middleware.Protected(cfg))
 
@@ -95,6 +99,10 @@ func main() {
 	protected.Get("/reports/stats", h.GetReportStats)
 	protected.Get("/profile", h.GetProfile)
 	protected.Put("/profile", h.UpdateProfile)
+
+	// Chat Routes (any authenticated user can chat)
+	protected.Post("/chat/send", h.SendChatMessage)
+	protected.Get("/chat/messages", h.GetMyMessages)
 
 	// Admin Routes (Requires 'admin' role)
 	adminGroup := protected.Group("/admin", middleware.AdminOnly(repo))
@@ -114,6 +122,11 @@ func main() {
 	superAdminGroup.Post("/admins", h.CreateAdmin)
 	superAdminGroup.Put("/admins/:id", h.UpdateAdmin)
 	superAdminGroup.Delete("/admins/:id", h.DeleteAdmin)
+
+	// Super Admin Chat Inbox
+	superAdminGroup.Get("/chat/conversations", h.GetAllConversations)
+	superAdminGroup.Get("/chat/conversations/:id/messages", h.GetConversationMessages)
+	superAdminGroup.Post("/chat/conversations/:id/reply", h.ReplyChatMessage)
 
 	// Start server
 	log.Printf("Server starting on port %s", cfg.Port)
