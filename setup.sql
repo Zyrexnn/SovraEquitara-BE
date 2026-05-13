@@ -145,3 +145,35 @@ BEGIN
     DELETE FROM forgot_password_otps WHERE created_at < NOW() - INTERVAL '10 minutes';
 END;
 $$ LANGUAGE plpgsql;
+
+-- ============================================================
+-- CONVERSATIONS TABLE (Chat between users/admins and super admin)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS conversations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    participant_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    last_message TEXT DEFAULT '',
+    last_message_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    unread_count INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+-- One conversation per participant
+CREATE UNIQUE INDEX IF NOT EXISTS idx_conversations_participant ON conversations(participant_id);
+CREATE INDEX IF NOT EXISTS idx_conversations_last_message ON conversations(last_message_at DESC);
+
+-- ============================================================
+-- MESSAGES TABLE
+-- ============================================================
+CREATE TABLE IF NOT EXISTS messages (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    sender_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    content TEXT NOT NULL,
+    is_read BOOLEAN NOT NULL DEFAULT false,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, created_at ASC);
+CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_id);
