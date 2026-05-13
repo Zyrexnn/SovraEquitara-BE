@@ -351,7 +351,7 @@ func (h *Handler) AdminLogin(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Email atau password admin salah!"})
 	}
 
-	if profile.Role != "admin" {
+	if profile.Role != "admin" && profile.Role != "super_admin" {
 		return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Akses ditolak: Anda bukan admin!"})
 	}
 
@@ -585,6 +585,20 @@ func (h *Handler) ResolveReport(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Laporan berhasil diselesaikan"})
 }
 
+func (h *Handler) CancelReport(c *fiber.Ctx) error {
+	reportIDStr := c.Params("id")
+	reportID, err := uuid.Parse(reportIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Bad Request"})
+	}
+
+	if err := h.Repo.CancelReport(reportID); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal membatalkan laporan"})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Laporan berhasil dibatalkan dan kembali ke status PENDING"})
+}
+
 // ============================================================
 // COMMENTS & VOTES
 // ============================================================
@@ -815,8 +829,97 @@ Here are the recent reports:
 		contentObj := candidate["content"].(map[string]interface{})
 		parts := contentObj["parts"].([]interface{})
 		firstPart := parts[0].(map[string]interface{})
-		content := firstPart["text"].(string)
 
-		return c.Status(fiber.StatusOK).JSON(fiber.Map{"response": content})
+		return c.Status(fiber.StatusOK).JSON(fiber.Map{"response": firstPart["text"]})
 	}
+}
+
+// ============================================================
+// ADMIN MANAGEMENT (Super Admin)
+// ============================================================
+
+func (h *Handler) GetAdmins(c *fiber.Ctx) error {
+	admins, err := h.Repo.GetAdmins()
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal memuat daftar admin"})
+	}
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"data": admins})
+}
+
+func (h *Handler) CreateAdmin(c *fiber.Ctx) error {
+	var req struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+		FullName string `json:"full_name"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request"})
+	}
+
+	exists, _ := h.Repo.CheckEmailExists(req.Email)
+	if exists {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Email sudah terdaftar"})
+	}
+
+	hashedPw, err := hashPassword(req.Password)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal memproses password"})
+	}
+
+	profile := &model.Profile{
+		Email:        req.Email,
+		PasswordHash: hashedPw,
+		FullName:     req.FullName,
+		Role:         "admin",
+	}
+
+	if err := h.Repo.CreateAdmin(profile); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal membuat admin"})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Admin berhasil dibuat"})
+}
+
+func (h *Handler) UpdateAdmin(c *fiber.Ctx) error {
+	adminIDStr := c.Params("id")
+	adminID, err := uuid.Parse(adminIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Bad Request"})
+	}
+
+	var req struct {
+		FullName string `json:"full_name"`
+		Password string `json:"password"` // optional
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request"})
+	}
+
+	var hashedPw string
+	if req.Password != "" {
+		hashedPw, err = hashPassword(req.Password)
+		if err != nil {
+			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal memproses password"})
+		}
+	}
+
+	if err := h.Repo.UpdateAdmin(adminID, req.FullName, hashedPw); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal mengupdate admin"})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Admin berhasil diupdate"})
+}
+
+func (h *Handler) DeleteAdmin(c *fiber.Ctx) error {
+	adminIDStr := c.Params("id")
+	adminID, err := uuid.Parse(adminIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Bad Request"})
+	}
+
+	if err := h.Repo.DeleteAdmin(adminID); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal menghapus admin"})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Admin berhasil dihapus"})
 }

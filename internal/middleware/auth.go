@@ -73,9 +73,33 @@ func AdminOnly(repo repository.Repository) fiber.Handler {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Forbidden: Profile not found"})
 		}
 
-		// Ensure strictly 'admin' role
-		if profile.Role != "admin" {
+		// Ensure strictly 'admin' or 'super_admin' role
+		if profile.Role != "admin" && profile.Role != "super_admin" {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Forbidden: Admin privileges required"})
+		}
+
+		return c.Next()
+	}
+}
+
+// SuperAdminOnly checks if the authenticated user has 'super_admin' role in profiles table
+func SuperAdminOnly(repo repository.Repository) fiber.Handler {
+	return func(c *fiber.Ctx) error {
+		userIDStr := c.Locals("userID").(string)
+
+		userID, err := uuid.Parse(userIDStr)
+		if err != nil {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized: Invalid User ID format"})
+		}
+
+		profile, err := repo.GetProfileByID(userID)
+		if err != nil {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Forbidden: Profile not found"})
+		}
+
+		// Ensure strictly 'super_admin' role
+		if profile.Role != "super_admin" {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"error": "Forbidden: Super Admin privileges required"})
 		}
 
 		return c.Next()
