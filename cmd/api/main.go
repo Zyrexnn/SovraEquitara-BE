@@ -103,6 +103,18 @@ func main() {
 	adminGroup.Patch("/reports/:id/resolve", h.ResolveReport)
 	adminGroup.Post("/ai-assistant", h.AIAssistant)
 
+	// Super Admin Routes (Requires 'super_admin' role)
+	superAdminGroup := protected.Group("/superadmin", middleware.SuperAdminOnly(repo))
+	
+	// Super Admin can cancel reports
+	superAdminGroup.Patch("/reports/:id/cancel", h.CancelReport)
+	
+	// CRUD Admin
+	superAdminGroup.Get("/admins", h.GetAdmins)
+	superAdminGroup.Post("/admins", h.CreateAdmin)
+	superAdminGroup.Put("/admins/:id", h.UpdateAdmin)
+	superAdminGroup.Delete("/admins/:id", h.DeleteAdmin)
+
 	// Start server
 	log.Printf("Server starting on port %s", cfg.Port)
 	if err := app.Listen(":" + cfg.Port); err != nil {
