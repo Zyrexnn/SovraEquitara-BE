@@ -111,3 +111,36 @@ type AIAssistantRequest struct {
 	Query string `json:"query"`
 	Model string `json:"model"` // "local" or "gemini"
 }
+
+// ============================================================
+// CHAT SYSTEM
+// ============================================================
+
+type Conversation struct {
+	ID            uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	ParticipantID uuid.UUID `gorm:"type:uuid;not null" json:"participant_id"`
+	LastMessage   string    `json:"last_message"`
+	LastMessageAt time.Time `json:"last_message_at"`
+	UnreadCount   int       `gorm:"default:0" json:"unread_count"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+
+	// Relationships
+	Participant *Profile `gorm:"foreignKey:ParticipantID" json:"participant,omitempty"`
+}
+
+type Message struct {
+	ID             uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	ConversationID uuid.UUID `gorm:"type:uuid;not null" json:"conversation_id"`
+	SenderID       uuid.UUID `gorm:"type:uuid;not null" json:"sender_id"`
+	Content        string    `gorm:"not null" json:"content"`
+	IsRead         bool      `gorm:"default:false" json:"is_read"`
+	CreatedAt      time.Time `json:"created_at"`
+
+	// Relationships
+	Sender *Profile `gorm:"foreignKey:SenderID" json:"sender,omitempty"`
+}
+
+type SendMessageRequest struct {
+	Content string `json:"content" validate:"required"`
+}
