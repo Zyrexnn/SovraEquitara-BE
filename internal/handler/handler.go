@@ -923,3 +923,167 @@ func (h *Handler) DeleteAdmin(c *fiber.Ctx) error {
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Admin berhasil dihapus"})
 }
+
+// ============================================================
+// CHAT SYSTEM
+// ============================================================
+
+// SendChatMessage — any authenticated user sends a message to super admin
+func (h *Handler) SendChatMessage(c *fiber.Ctx) error {
+	userIDStr := c.Locals("userID").(string)
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized"})
+	}
+
+	var req model.SendMessageRequest
+	if err := c.BodyParser(&req); err != nil || req.Content == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Pesan tidak boleh kosong"})
+	}
+
+	// Get or create conversation for this user
+	conv, err := h.Repo.GetOrCreateConversation(userID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal membuat percakapan"})
+	}
+
+	msg := &model.Message{
+		ConversationID: conv.ID,
+		SenderID:       userID,
+		Content:        req.Content,
+	}
+	if err := h.Repo.SendMessage(msg); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal mengirim pesan"})
+	}
+
+	// Update conversation metadata (unread for super admin)
+	truncated := req.Content
+	if len(truncated) > 100 {
+		truncated = truncated[:100] + "..."
+	}
+	h.Repo.UpdateConversationLastMessage(conv.ID, truncated, true)
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Pesan terkirim", "data": msg})
+}
+
+// GetMyMessages — user gets their own conversation messages
+func (h *Handler) GetMyMessages(c *fiber.Ctx) error {
+	userIDStr := c.Locals("userID").(string)
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized"})
+	}
+
+	conv, err := h.Repo.GetOrCreateConversation(userID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal memuat percakapan"})
+	}
+
+	messages, err := h.Repo.GetMessagesByConversationID(conv.ID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal memuat pesan"})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"data": messages, "conversation_id": conv.ID})
+}
+
+// GetAllConversations — super admin lists all conversations with optional role filter
+func (h *Handler) GetAllConversations(c *fiber.Ctx) error {
+	roleFilter := c.Query("role", "")
+	convs, err := h.Repo.GetAllConversations(roleFilter)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal memuat percakapan"})
+	}
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"data": convs})
+}
+
+// GetConversationMessages — super admin gets messages of a specific conversation
+func (h *Handler) GetConversationMessages(c *fiber.Ctx) error {
+	convIDStr := c.Params("id")
+	convID, err := uuid.Parse(convIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid conversation ID"})
+	}
+
+	messages, err := h.Repo.GetMessagesByConversationID(convID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal memuat pesan"})
+	}
+
+	// Auto-mark as read when super admin opens
+	h.Repo.MarkConversationAsRead(convID)
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"data": messages})
+}
+
+// ReplyChatMessage — super admin replies to a conversation
+func (h *Handler) ReplyChatMessage(c *fiber.Ctx) error {
+	convIDStr := c.Params("id")
+	convID, err := uuid.Parse(convIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid conversation ID"})
+	}
+
+	userIDStr := c.Locals("userID").(string)
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized"})
+	}
+
+	var req model.SendMessageRequest
+	if err := c.BodyParser(&req); err != nil || req.Content == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Pesan tidak boleh kosong"})
+	}
+
+	msg := &model.Message{
+		ConversationID: convID,
+		SenderID:       userID,
+		Content:        req.Content,
+	}
+	if err := h.Repo.SendMessage(msg); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal mengirim balasan"})
+	}
+
+	truncated := req.Content
+	if len(truncated) > 100 {
+		truncated = truncated[:100] + "..."
+	}
+	h.Repo.UpdateConversationLastMessage(convID, truncated, false)
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Balasan terkirim", "data": msg})
+}
+
+// ============================================================
+// PROFILE LISTING (Public)
+// ============================================================
+
+func (h *Handler) GetAllProfiles(c *fiber.Ctx) error {
+	profiles, err := h.Repo.GetAllProfiles()
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal memuat data profil"})
+	}
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"data": profiles})
+}
+
+func (h *Handler) GetProfileByID(c *fiber.Ctx) error {
+	idStr := c.Params("id")
+	id, err := uuid.Parse(idStr)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid ID"})
+	}
+
+	profile, err := h.Repo.GetProfileByID(id)
+	if err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Profil tidak ditemukan"})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"data": fiber.Map{
+		"id":         profile.ID,
+		"email":      profile.Email,
+		"full_name":  profile.FullName,
+		"phone":      profile.Phone,
+		"points":     profile.Points,
+		"role":       profile.Role,
+		"created_at": profile.CreatedAt,
+	}})
+}
