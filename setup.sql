@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS profiles (
     full_name TEXT NOT NULL DEFAULT '',
     phone TEXT DEFAULT '',
     points INTEGER NOT NULL DEFAULT 0,
-    role TEXT NOT NULL DEFAULT 'USER' CHECK (role IN ('USER', 'admin')),
+    role TEXT NOT NULL DEFAULT 'USER' CHECK (role IN ('USER', 'admin', 'super_admin')),
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
