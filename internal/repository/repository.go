@@ -28,8 +28,15 @@ type Repository interface {
 	GetPublicReports(sortBy string) ([]model.Report, error)
 	VerifyReport(reportID uuid.UUID) error
 	ResolveReport(reportID uuid.UUID) error
+	CancelReport(reportID uuid.UUID) error
 	GetReportStats(profileID uuid.UUID) (*model.ReportStats, error)
 	DeleteReport(reportID, profileID uuid.UUID) error
+
+	// Admin Management
+	GetAdmins() ([]model.Profile, error)
+	CreateAdmin(profile *model.Profile) error
+	UpdateAdmin(id uuid.UUID, fullName string, passwordHash string) error
+	DeleteAdmin(id uuid.UUID) error
 
 	// Comments
 	CreateComment(comment *model.Comment) error
@@ -223,6 +230,36 @@ func (r *repository) ResolveReport(reportID uuid.UUID) error {
 	})
 }
 
+func (r *repository) CancelReport(reportID uuid.UUID) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		var report model.Report
+		if err := tx.First(&report, "id = ?", reportID).Error; err != nil {
+			return err
+		}
+
+		if report.Status == "PENDING" {
+			return gorm.ErrInvalidData
+		}
+
+		var pointDiff int
+		if report.Status == "VALID" {
+			pointDiff = -10
+		} else if report.Status == "RESOLVED" {
+			pointDiff = -60 // 10 for VALID + 50 for RESOLVED
+		}
+
+		if err := tx.Model(&report).Update("status", "PENDING").Error; err != nil {
+			return err
+		}
+
+		if err := tx.Model(&model.Profile{}).Where("id = ?", report.ProfileID).Update("points", gorm.Expr("points + ?", pointDiff)).Error; err != nil {
+			return err
+		}
+
+		return nil
+	})
+}
+
 func (r *repository) GetReportStats(profileID uuid.UUID) (*model.ReportStats, error) {
 	var stats model.ReportStats
 	err := r.db.Model(&model.Report{}).Where("profile_id = ?", profileID).Count(&stats.Total).Error
@@ -383,4 +420,30 @@ func (r *repository) VerifyForgotPasswordOTP(email, code string) error {
 
 func (r *repository) DeleteForgotPasswordOTP(email string) error {
 	return r.db.Exec("DELETE FROM forgot_password_otps WHERE email = $1", email).Error
+}
+
+// ============================================================
+// ADMIN MANAGEMENT (For Super Admin)
+// ============================================================
+
+func (r *repository) GetAdmins() ([]model.Profile, error) {
+	var admins []model.Profile
+	err := r.db.Where("role = ?", "admin").Find(&admins).Error
+	return admins, err
+}
+
+func (r *repository) CreateAdmin(profile *model.Profile) error {
+	return r.db.Create(profile).Error
+}
+
+func (r *repository) UpdateAdmin(id uuid.UUID, fullName string, passwordHash string) error {
+	updates := map[string]interface{}{"full_name": fullName}
+	if passwordHash != "" {
+		updates["password_hash"] = passwordHash
+	}
+	return r.db.Model(&model.Profile{}).Where("id = ?", id).Updates(updates).Error
+}
+
+func (r *repository) DeleteAdmin(id uuid.UUID) error {
+	return r.db.Where("id = ? AND role = ?", id, "admin").Delete(&model.Profile{}).Error
 }
