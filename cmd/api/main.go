@@ -111,6 +111,11 @@ func main() {
 	adminGroup.Patch("/reports/:id/resolve", h.ResolveReport)
 	adminGroup.Post("/ai-assistant", h.AIAssistant)
 
+	// Admin Chat Inbox
+	adminGroup.Get("/chat/conversations", h.GetAllConversations)
+	adminGroup.Get("/chat/conversations/:id/messages", h.GetConversationMessages)
+	adminGroup.Post("/chat/conversations/:id/reply", h.ReplyChatMessage)
+
 	// Super Admin Routes (Requires 'super_admin' role)
 	superAdminGroup := protected.Group("/superadmin", middleware.SuperAdminOnly(repo))
 	
@@ -122,11 +127,6 @@ func main() {
 	superAdminGroup.Post("/admins", h.CreateAdmin)
 	superAdminGroup.Put("/admins/:id", h.UpdateAdmin)
 	superAdminGroup.Delete("/admins/:id", h.DeleteAdmin)
-
-	// Super Admin Chat Inbox
-	superAdminGroup.Get("/chat/conversations", h.GetAllConversations)
-	superAdminGroup.Get("/chat/conversations/:id/messages", h.GetConversationMessages)
-	superAdminGroup.Post("/chat/conversations/:id/reply", h.ReplyChatMessage)
 
 	// Start server
 	log.Printf("Server starting on port %s", cfg.Port)
