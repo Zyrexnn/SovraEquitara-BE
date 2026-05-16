@@ -1,15 +1,15 @@
 # ⚙️ SovraEquitara Backend API
 
-Mesin utama platform **SovraEquitara**, dibangun menggunakan **Go (Golang)** dan framework **Fiber** untuk menangani logika bisnis, autentikasi, dan persistensi data dengan performa tinggi.
+Mesin utama platform **SovraEquitara**, dibangun menggunakan **Go (Golang)** dan framework **Fiber** untuk menangani logika bisnis, autentikasi, dan persistensi data dengan performa tinggi. API ini mendukung ekosistem Smart City dengan keamanan berlapis dan integrasi AI.
 
 ---
 
 ## 🛠️ Tech Stack
 - **Language**: [Go v1.21+](https://go.dev/)
 - **Framework**: [Fiber v2](https://gofiber.io/)
-- **Database**: [PostgreSQL](https://www.postgresql.org/)
-- **Authentication**: JWT (JSON Web Token)
-- **Email Service**: SMTP (untuk Reset Password)
+- **Database**: [PostgreSQL](https://www.postgresql.org/) (Native with GORM)
+- **Authentication**: JWT (Enkripsi Argon2)
+- **Role System**: Multi-tier (USER, admin, super_admin)
 
 ---
 
