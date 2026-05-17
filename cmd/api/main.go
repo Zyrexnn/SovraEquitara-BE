@@ -99,6 +99,7 @@ func main() {
 	protected.Get("/reports/stats", h.GetReportStats)
 	protected.Get("/profile", h.GetProfile)
 	protected.Put("/profile", h.UpdateProfile)
+	protected.Post("/profile/avatar", h.UploadAvatar)
 
 	// Chat Routes (any authenticated user can chat)
 	protected.Post("/chat/send", h.SendChatMessage)
@@ -121,6 +122,9 @@ func main() {
 	
 	// Super Admin can cancel reports
 	superAdminGroup.Patch("/reports/:id/cancel", h.CancelReport)
+	
+	// User Stats (Super Admin)
+	superAdminGroup.Get("/profiles/:id/stats", h.GetUserStats)
 	
 	// CRUD Admin
 	superAdminGroup.Get("/admins", h.GetAdmins)

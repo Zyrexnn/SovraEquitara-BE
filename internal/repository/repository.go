@@ -17,6 +17,7 @@ type Repository interface {
 	// Profile
 	GetProfileByID(id uuid.UUID) (*model.Profile, error)
 	UpdateProfile(id uuid.UUID, req model.UpdateProfileRequest) error
+	UpdateAvatar(id uuid.UUID, avatarURL string) error
 
 	// Categories
 	GetCategories() ([]model.Category, error)
@@ -67,7 +68,7 @@ type Repository interface {
 	MarkConversationAsRead(conversationID uuid.UUID) error
 
 	// Profile Listing
-	GetAllProfiles() ([]model.Profile, error)
+	GetAllProfiles(search string, roleFilter string) ([]model.Profile, error)
 }
 
 type repository struct {
@@ -109,6 +110,10 @@ func (r *repository) UpdateProfile(id uuid.UUID, req model.UpdateProfileRequest)
 		"full_name": req.FullName,
 		"phone":     req.Phone,
 	}).Error
+}
+
+func (r *repository) UpdateAvatar(id uuid.UUID, avatarURL string) error {
+	return r.db.Model(&model.Profile{}).Where("id = ?", id).Update("avatar_url", avatarURL).Error
 }
 
 func (r *repository) UpdatePasswordByEmail(email, passwordHash string) error {
@@ -519,8 +524,17 @@ func (r *repository) MarkConversationAsRead(conversationID uuid.UUID) error {
 // PROFILE LISTING
 // ============================================================
 
-func (r *repository) GetAllProfiles() ([]model.Profile, error) {
+func (r *repository) GetAllProfiles(search string, roleFilter string) ([]model.Profile, error) {
 	var profiles []model.Profile
-	err := r.db.Select("id, email, full_name, phone, points, role, created_at").Order("created_at DESC").Find(&profiles).Error
+	query := r.db.Select("id, email, full_name, phone, avatar_url, points, role, created_at").Order("created_at DESC")
+	
+	if search != "" {
+		query = query.Where("full_name ILIKE ? OR email ILIKE ?", "%"+search+"%", "%"+search+"%")
+	}
+	if roleFilter != "" {
+		query = query.Where("role = ?", roleFilter)
+	}
+
+	err := query.Find(&profiles).Error
 	return profiles, err
 }

@@ -12,6 +12,7 @@ type Profile struct {
 	PasswordHash string    `gorm:"column:password_hash;not null" json:"-"`
 	FullName     string    `json:"full_name"`
 	Phone        string    `json:"phone"`
+	AvatarURL    *string   `json:"avatar_url"`
 	Points       int       `gorm:"default:0" json:"points"`
 	Role         string    `gorm:"default:'USER'" json:"role"`
 	CreatedAt    time.Time `json:"created_at"`

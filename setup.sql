@@ -12,11 +12,14 @@ CREATE TABLE IF NOT EXISTS profiles (
     password_hash TEXT NOT NULL,
     full_name TEXT NOT NULL DEFAULT '',
     phone TEXT DEFAULT '',
+    avatar_url TEXT,
     points INTEGER NOT NULL DEFAULT 0,
     role TEXT NOT NULL DEFAULT 'USER' CHECK (role IN ('USER', 'admin', 'super_admin')),
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
+
+ALTER TABLE profiles ADD COLUMN IF NOT EXISTS avatar_url TEXT;
 
 -- Index for fast email lookups during login/register
 CREATE INDEX IF NOT EXISTS idx_profiles_email ON profiles(email);

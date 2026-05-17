@@ -924,6 +924,21 @@ func (h *Handler) DeleteAdmin(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Admin berhasil dihapus"})
 }
 
+func (h *Handler) GetUserStats(c *fiber.Ctx) error {
+	profileIDStr := c.Params("id")
+	profileID, err := uuid.Parse(profileIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid profile ID"})
+	}
+
+	stats, err := h.Repo.GetReportStats(profileID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal memuat statistik pengguna"})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"data": stats})
+}
+
 // ============================================================
 // CHAT SYSTEM
 // ============================================================
@@ -1057,12 +1072,46 @@ func (h *Handler) ReplyChatMessage(c *fiber.Ctx) error {
 // PROFILE LISTING (Public)
 // ============================================================
 
+// GetAllProfiles
 func (h *Handler) GetAllProfiles(c *fiber.Ctx) error {
-	profiles, err := h.Repo.GetAllProfiles()
+	search := c.Query("search", "")
+	role := c.Query("role", "")
+	profiles, err := h.Repo.GetAllProfiles(search, role)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal memuat data profil"})
 	}
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{"data": profiles})
+}
+
+// UploadAvatar
+func (h *Handler) UploadAvatar(c *fiber.Ctx) error {
+	userIDStr := c.Locals("userID").(string)
+	profileID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized"})
+	}
+
+	file, err := c.FormFile("avatar")
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Pilih gambar profil terlebih dahulu"})
+	}
+
+	if file.Size > 2*1024*1024 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Ukuran gambar maksimal 2MB"})
+	}
+
+	filename := fmt.Sprintf("avatar-%s-%d-%s", profileID.String(), time.Now().Unix(), file.Filename)
+	filepath := fmt.Sprintf("./uploads/%s", filename)
+	if err := c.SaveFile(file, filepath); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal menyimpan gambar"})
+	}
+	url := fmt.Sprintf("/uploads/%s", filename)
+
+	if err := h.Repo.UpdateAvatar(profileID, url); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal memperbarui avatar"})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Foto profil berhasil diperbarui", "avatar_url": url})
 }
 
 func (h *Handler) GetProfileByID(c *fiber.Ctx) error {
@@ -1082,6 +1131,7 @@ func (h *Handler) GetProfileByID(c *fiber.Ctx) error {
 		"email":      profile.Email,
 		"full_name":  profile.FullName,
 		"phone":      profile.Phone,
+		"avatar_url": profile.AvatarURL,
 		"points":     profile.Points,
 		"role":       profile.Role,
 		"created_at": profile.CreatedAt,
