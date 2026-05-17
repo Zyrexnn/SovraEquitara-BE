@@ -69,6 +69,10 @@ type Repository interface {
 
 	// Profile Listing
 	GetAllProfiles(search string, roleFilter string) ([]model.Profile, error)
+
+	// Notifications
+	CreateNotification(notif *model.Notification) error
+	GetNotifications(role string) ([]model.Notification, error)
 }
 
 type repository struct {
@@ -537,4 +541,28 @@ func (r *repository) GetAllProfiles(search string, roleFilter string) ([]model.P
 
 	err := query.Find(&profiles).Error
 	return profiles, err
+}
+
+// ============================================================
+// NOTIFICATIONS
+// ============================================================
+
+func (r *repository) CreateNotification(notif *model.Notification) error {
+	return r.db.Create(notif).Error
+}
+
+func (r *repository) GetNotifications(role string) ([]model.Notification, error) {
+	var notifs []model.Notification
+	// Fetch notifications that are for ALL, or for the specific role.
+	// We'll limit to the last 20 for performance.
+	query := r.db.Preload("Creator").Order("created_at DESC").Limit(20)
+	
+	if role == "super_admin" {
+		// super_admin sees all
+		err := query.Find(&notifs).Error
+		return notifs, err
+	}
+
+	err := query.Where("target_role = ? OR target_role = ?", "ALL", role).Find(&notifs).Error
+	return notifs, err
 }

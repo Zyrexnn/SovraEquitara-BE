@@ -167,8 +167,19 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_conversations_participant ON conversations
 CREATE INDEX IF NOT EXISTS idx_conversations_last_message ON conversations(last_message_at DESC);
 
 -- ============================================================
--- MESSAGES TABLE
+-- NOTIFICATIONS TABLE (System & Emergency Broadcasts)
 -- ============================================================
+CREATE TABLE IF NOT EXISTS notifications (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    title TEXT NOT NULL,
+    message TEXT NOT NULL,
+    type TEXT NOT NULL DEFAULT 'INFO' CHECK (type IN ('INFO', 'WARNING', 'EMERGENCY')),
+    target_role TEXT NOT NULL DEFAULT 'ALL' CHECK (target_role IN ('ALL', 'USER', 'admin', 'super_admin')),
+    created_by UUID REFERENCES profiles(id) ON DELETE SET NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_notifications_created_at ON notifications(created_at DESC);
 CREATE TABLE IF NOT EXISTS messages (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,

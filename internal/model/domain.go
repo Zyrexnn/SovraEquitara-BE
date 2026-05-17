@@ -145,3 +145,26 @@ type Message struct {
 type SendMessageRequest struct {
 	Content string `json:"content" validate:"required"`
 }
+
+// ============================================================
+// NOTIFICATIONS SYSTEM
+// ============================================================
+
+type Notification struct {
+	ID         uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	Title      string    `gorm:"not null" json:"title"`
+	Message    string    `gorm:"not null" json:"message"`
+	Type       string    `gorm:"default:'INFO'" json:"type"`               // INFO, WARNING, EMERGENCY
+	TargetRole string    `gorm:"default:'ALL'" json:"target_role"`         // ALL, USER, admin, super_admin
+	CreatedBy  *uuid.UUID `gorm:"type:uuid" json:"created_by"`             // Can be null if system generated
+	CreatedAt  time.Time `json:"created_at"`
+	
+	Creator    *Profile `gorm:"foreignKey:CreatedBy" json:"creator,omitempty"`
+}
+
+type CreateNotificationRequest struct {
+	Title      string `json:"title" validate:"required"`
+	Message    string `json:"message" validate:"required"`
+	Type       string `json:"type" validate:"required"`
+	TargetRole string `json:"target_role" validate:"required"`
+}

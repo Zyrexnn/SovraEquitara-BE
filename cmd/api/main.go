@@ -100,6 +100,7 @@ func main() {
 	protected.Get("/profile", h.GetProfile)
 	protected.Put("/profile", h.UpdateProfile)
 	protected.Post("/profile/avatar", h.UploadAvatar)
+	protected.Get("/notifications", h.GetNotifications)
 
 	// Chat Routes (any authenticated user can chat)
 	protected.Post("/chat/send", h.SendChatMessage)
@@ -111,6 +112,7 @@ func main() {
 	adminGroup.Patch("/reports/:id/verify", h.VerifyReport)
 	adminGroup.Patch("/reports/:id/resolve", h.ResolveReport)
 	adminGroup.Post("/ai-assistant", h.AIAssistant)
+	adminGroup.Post("/notifications", h.CreateNotification)
 
 	// Admin Chat Inbox
 	adminGroup.Get("/chat/conversations", h.GetAllConversations)

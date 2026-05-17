@@ -1069,6 +1069,48 @@ func (h *Handler) ReplyChatMessage(c *fiber.Ctx) error {
 }
 
 // ============================================================
+// NOTIFICATIONS SYSTEM
+// ============================================================
+
+func (h *Handler) GetNotifications(c *fiber.Ctx) error {
+	role := c.Locals("role").(string)
+	
+	notifs, err := h.Repo.GetNotifications(role)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal memuat notifikasi"})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"data": notifs})
+}
+
+func (h *Handler) CreateNotification(c *fiber.Ctx) error {
+	creatorIDStr := c.Locals("userID").(string)
+	creatorID, err := uuid.Parse(creatorIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized"})
+	}
+
+	var req model.CreateNotificationRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Input tidak valid"})
+	}
+
+	notif := &model.Notification{
+		Title:      req.Title,
+		Message:    req.Message,
+		Type:       req.Type,
+		TargetRole: req.TargetRole,
+		CreatedBy:  &creatorID,
+	}
+
+	if err := h.Repo.CreateNotification(notif); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal membuat notifikasi"})
+	}
+
+	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"message": "Notifikasi/Pesan Darurat berhasil dibuat", "data": notif})
+}
+
+// ============================================================
 // PROFILE LISTING (Public)
 // ============================================================
 
