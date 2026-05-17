@@ -53,6 +53,9 @@ func Protected(cfg *config.Config) fiber.Handler {
 			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized: Missing user ID in token"})
 		}
 
+		role, _ := claims["role"].(string)
+		c.Locals("role", role)
+
 		c.Locals("userID", userID)
 		return c.Next()
 	}
