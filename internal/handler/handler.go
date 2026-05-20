@@ -557,6 +557,51 @@ func (h *Handler) GetPublicReports(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{"data": reports})
 }
 
+// ============================================================
+// SAVED REPORTS (For Admins)
+// ============================================================
+
+func (h *Handler) ToggleSaveReport(c *fiber.Ctx) error {
+	adminIDStr := c.Locals("userID").(string)
+	adminID, err := uuid.Parse(adminIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Akses tidak valid"})
+	}
+
+	reportIDStr := c.Params("id")
+	reportID, err := uuid.Parse(reportIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "ID laporan tidak valid"})
+	}
+
+	saved, err := h.Repo.ToggleSaveReport(adminID, reportID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal menyimpan/menghapus laporan tersimpan"})
+	}
+
+	statusMsg := "Laporan dihapus dari penyimpanan"
+	if saved {
+		statusMsg = "Laporan berhasil disimpan"
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": statusMsg, "saved": saved})
+}
+
+func (h *Handler) GetSavedReports(c *fiber.Ctx) error {
+	adminIDStr := c.Locals("userID").(string)
+	adminID, err := uuid.Parse(adminIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Akses tidak valid"})
+	}
+
+	reports, err := h.Repo.GetSavedReports(adminID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal memuat laporan tersimpan"})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"data": reports})
+}
+
 func (h *Handler) VerifyReport(c *fiber.Ctx) error {
 	reportIDStr := c.Params("id")
 	reportID, err := uuid.Parse(reportIDStr)
@@ -1108,6 +1153,39 @@ func (h *Handler) CreateNotification(c *fiber.Ctx) error {
 	}
 
 	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"message": "Notifikasi/Pesan Darurat berhasil dibuat", "data": notif})
+}
+
+func (h *Handler) UpdateNotification(c *fiber.Ctx) error {
+	notifIDStr := c.Params("id")
+	notifID, err := uuid.Parse(notifIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "ID tidak valid"})
+	}
+
+	var req model.CreateNotificationRequest // Reusing struct for simplicity
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Input tidak valid"})
+	}
+
+	if err := h.Repo.UpdateNotification(notifID, req.Title, req.Message, req.Type, req.TargetRole); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal memperbarui notifikasi"})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Notifikasi berhasil diperbarui"})
+}
+
+func (h *Handler) DeleteNotification(c *fiber.Ctx) error {
+	notifIDStr := c.Params("id")
+	notifID, err := uuid.Parse(notifIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "ID tidak valid"})
+	}
+
+	if err := h.Repo.DeleteNotification(notifID); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal menghapus notifikasi"})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Notifikasi berhasil dihapus"})
 }
 
 // ============================================================

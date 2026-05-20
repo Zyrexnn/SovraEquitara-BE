@@ -109,10 +109,14 @@ func main() {
 	// Admin Routes (Requires 'admin' role)
 	adminGroup := protected.Group("/admin", middleware.AdminOnly(repo))
 	adminGroup.Get("/reports", h.GetAllReports)
+	adminGroup.Get("/saved-reports", h.GetSavedReports)
+	adminGroup.Post("/reports/:id/save", h.ToggleSaveReport)
 	adminGroup.Patch("/reports/:id/verify", h.VerifyReport)
 	adminGroup.Patch("/reports/:id/resolve", h.ResolveReport)
 	adminGroup.Post("/ai-assistant", h.AIAssistant)
 	adminGroup.Post("/notifications", h.CreateNotification)
+	adminGroup.Put("/notifications/:id", h.UpdateNotification)
+	adminGroup.Delete("/notifications/:id", h.DeleteNotification)
 
 	// Admin Chat Inbox
 	adminGroup.Get("/chat/conversations", h.GetAllConversations)

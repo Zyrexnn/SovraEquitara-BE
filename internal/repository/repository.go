@@ -33,6 +33,10 @@ type Repository interface {
 	GetReportStats(profileID uuid.UUID) (*model.ReportStats, error)
 	DeleteReport(reportID, profileID uuid.UUID) error
 
+	// Saved Reports
+	GetSavedReports(adminID uuid.UUID) ([]model.Report, error)
+	ToggleSaveReport(adminID, reportID uuid.UUID) (bool, error)
+
 	// Admin Management
 	GetAdmins() ([]model.Profile, error)
 	CreateAdmin(profile *model.Profile) error
@@ -73,6 +77,8 @@ type Repository interface {
 	// Notifications
 	CreateNotification(notif *model.Notification) error
 	GetNotifications(role string) ([]model.Notification, error)
+	UpdateNotification(id uuid.UUID, title, message, notifType, targetRole string) error
+	DeleteNotification(id uuid.UUID) error
 }
 
 type repository struct {
@@ -301,6 +307,41 @@ func (r *repository) DeleteReport(reportID, profileID uuid.UUID) error {
 		return gorm.ErrRecordNotFound
 	}
 	return nil
+}
+
+// ============================================================
+// SAVED REPORTS
+// ============================================================
+
+func (r *repository) ToggleSaveReport(adminID, reportID uuid.UUID) (bool, error) {
+	var count int64
+	err := r.db.Model(&model.SavedReport{}).Where("admin_id = ? AND report_id = ?", adminID, reportID).Count(&count).Error
+	if err != nil {
+		return false, err
+	}
+
+	if count > 0 {
+		// Unsave
+		err = r.db.Where("admin_id = ? AND report_id = ?", adminID, reportID).Delete(&model.SavedReport{}).Error
+		return false, err
+	}
+
+	// Save
+	err = r.db.Create(&model.SavedReport{
+		AdminID:  adminID,
+		ReportID: reportID,
+	}).Error
+	return true, err
+}
+
+func (r *repository) GetSavedReports(adminID uuid.UUID) ([]model.Report, error) {
+	var reports []model.Report
+	query := `SELECT r.* FROM reports r 
+			  JOIN saved_reports sr ON r.id = sr.report_id 
+			  WHERE sr.admin_id = $1 
+			  ORDER BY sr.created_at DESC`
+	err := r.db.Raw(query, adminID).Scan(&reports).Error
+	return reports, err
 }
 
 // ============================================================
@@ -553,16 +594,26 @@ func (r *repository) CreateNotification(notif *model.Notification) error {
 
 func (r *repository) GetNotifications(role string) ([]model.Notification, error) {
 	var notifs []model.Notification
-	// Fetch notifications that are for ALL, or for the specific role.
-	// We'll limit to the last 20 for performance.
-	query := r.db.Preload("Creator").Order("created_at DESC").Limit(20)
+	query := r.db.Preload("Creator").Order("created_at DESC").Limit(50)
 	
-	if role == "super_admin" {
-		// super_admin sees all
+	if role == "super_admin" || role == "admin" {
 		err := query.Find(&notifs).Error
 		return notifs, err
 	}
 
 	err := query.Where("target_role = ? OR target_role = ?", "ALL", role).Find(&notifs).Error
 	return notifs, err
+}
+
+func (r *repository) UpdateNotification(id uuid.UUID, title, message, notifType, targetRole string) error {
+	return r.db.Model(&model.Notification{}).Where("id = ?", id).Updates(map[string]interface{}{
+		"title":       title,
+		"message":     message,
+		"type":        notifType,
+		"target_role": targetRole,
+	}).Error
+}
+
+func (r *repository) DeleteNotification(id uuid.UUID) error {
+	return r.db.Where("id = ?", id).Delete(&model.Notification{}).Error
 }
