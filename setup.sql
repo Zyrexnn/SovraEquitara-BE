@@ -95,6 +95,16 @@ CREATE TABLE IF NOT EXISTS votes (
 );
 
 -- ============================================================
+-- SAVED REPORTS TABLE (For Admins)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS saved_reports (
+    admin_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+    report_id UUID NOT NULL REFERENCES reports(id) ON DELETE CASCADE,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (admin_id, report_id)
+);
+
+-- ============================================================
 -- OTP TABLE (Registration handoff)
 -- ============================================================
 CREATE TABLE IF NOT EXISTS otps (

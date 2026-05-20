@@ -59,6 +59,14 @@ type Vote struct {
 	VoteType int       `gorm:"not null" json:"vote_type"`
 }
 
+type SavedReport struct {
+	AdminID   uuid.UUID `gorm:"type:uuid;primaryKey" json:"admin_id"`
+	ReportID  uuid.UUID `gorm:"type:uuid;primaryKey" json:"report_id"`
+	CreatedAt time.Time `json:"created_at"`
+
+	Report *Report `gorm:"foreignKey:ReportID" json:"report,omitempty"`
+}
+
 type AuthRequest struct {
 	Name     string `json:"name,omitempty"`
 	Email    string `json:"email"`
