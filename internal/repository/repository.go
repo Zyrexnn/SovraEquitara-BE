@@ -29,6 +29,8 @@ type Repository interface {
 	GetPublicReports(sortBy string) ([]model.Report, error)
 	VerifyReport(reportID uuid.UUID) error
 	ResolveReport(reportID uuid.UUID) error
+	ApproveResolution(reportID, profileID uuid.UUID) error
+	RejectResolution(reportID, profileID uuid.UUID) error
 	CancelReport(reportID uuid.UUID) error
 	GetReportStats(profileID uuid.UUID) (*model.ReportStats, error)
 	DeleteReport(reportID, profileID uuid.UUID) error
@@ -205,7 +207,7 @@ func (r *repository) GetPublicReports(sortBy string) ([]model.Report, error) {
 	query := `SELECT id, profile_id, category_id, image_url, description, phone_number, 
 			  latitude, longitude, location_detail, vote_count, comment_count,
 			  status, created_at, updated_at 
-			  FROM reports WHERE status IN ('VALID', 'RESOLVED') ORDER BY ` + orderClause
+			  FROM reports WHERE status IN ('VALID', 'WAITING_APPROVAL', 'RESOLVED') ORDER BY ` + orderClause
 	err := r.db.Raw(query).Scan(&reports).Error
 	return reports, err
 }
@@ -225,10 +227,6 @@ func (r *repository) VerifyReport(reportID uuid.UUID) error {
 			return err
 		}
 
-		if err := tx.Model(&model.Profile{}).Where("id = ?", report.ProfileID).Update("points", gorm.Expr("points + ?", 10)).Error; err != nil {
-			return err
-		}
-
 		return nil
 	})
 }
@@ -244,11 +242,49 @@ func (r *repository) ResolveReport(reportID uuid.UUID) error {
 			return gorm.ErrInvalidData
 		}
 
+		if err := tx.Model(&report).Update("status", "WAITING_APPROVAL").Error; err != nil {
+			return err
+		}
+
+		return nil
+	})
+}
+
+func (r *repository) ApproveResolution(reportID, profileID uuid.UUID) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		var report model.Report
+		if err := tx.Where("id = ? AND profile_id = ?", reportID, profileID).First(&report).Error; err != nil {
+			return err
+		}
+
+		if report.Status != "WAITING_APPROVAL" {
+			return gorm.ErrInvalidData
+		}
+
 		if err := tx.Model(&report).Update("status", "RESOLVED").Error; err != nil {
 			return err
 		}
 
 		if err := tx.Model(&model.Profile{}).Where("id = ?", report.ProfileID).Update("points", gorm.Expr("points + ?", 50)).Error; err != nil {
+			return err
+		}
+
+		return nil
+	})
+}
+
+func (r *repository) RejectResolution(reportID, profileID uuid.UUID) error {
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		var report model.Report
+		if err := tx.Where("id = ? AND profile_id = ?", reportID, profileID).First(&report).Error; err != nil {
+			return err
+		}
+
+		if report.Status != "WAITING_APPROVAL" {
+			return gorm.ErrInvalidData
+		}
+
+		if err := tx.Model(&report).Update("status", "VALID").Error; err != nil {
 			return err
 		}
 
@@ -268,7 +304,7 @@ func (r *repository) CancelReport(reportID uuid.UUID) error {
 		}
 
 		var pointDiff int
-		if report.Status == "VALID" {
+		if report.Status == "VALID" || report.Status == "WAITING_APPROVAL" {
 			pointDiff = -10
 		} else if report.Status == "RESOLVED" {
 			pointDiff = -60 // 10 for VALID + 50 for RESOLVED
