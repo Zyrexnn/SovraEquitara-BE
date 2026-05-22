@@ -514,27 +514,30 @@ func (h *Handler) CreateReport(c *fiber.Ctx) error {
 	if req.Description == "" || req.Lat == 0 || req.Lng == 0 {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Description, latitude, and longitude are required"})
 	}
-	var imageURL *string
-	file, err := c.FormFile("image")
-	if err == nil {
-		// Make sure it's an image
-		if file.Size > 2*1024*1024 {
-			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Ukuran gambar maksimal 2MB"})
+	form, err := c.MultipartForm()
+	var imageUrls []string
+	if err == nil && form != nil {
+		files := form.File["images"]
+		if len(files) > 3 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Maksimal 3 gambar yang diperbolehkan"})
 		}
-		
-		filename := fmt.Sprintf("%d-%s", time.Now().Unix(), file.Filename)
-		filepath := fmt.Sprintf("./uploads/%s", filename)
-		if err := c.SaveFile(file, filepath); err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal menyimpan gambar"})
+		for _, file := range files {
+			if file.Size > 2*1024*1024 {
+				return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Ukuran gambar maksimal 2MB per file"})
+			}
+			filename := fmt.Sprintf("%d-%s", time.Now().Unix(), file.Filename)
+			filepath := fmt.Sprintf("./uploads/%s", filename)
+			if err := c.SaveFile(file, filepath); err != nil {
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal menyimpan gambar"})
+			}
+			imageUrls = append(imageUrls, fmt.Sprintf("/uploads/%s", filename))
 		}
-		url := fmt.Sprintf("/uploads/%s", filename)
-		imageURL = &url
 	}
 
 	report := &model.Report{
 		ProfileID:      profileID,
 		CategoryID:     req.CategoryID,
-		ImageURL:       imageURL,
+		ImageURLs:      imageUrls,
 		Description:    req.Description,
 		PhoneNumber:    req.PhoneNumber,
 		Latitude:       req.Lat,
