@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 )
 
 type Profile struct {
@@ -28,9 +29,9 @@ type Category struct {
 type Report struct {
 	ID             uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
 	ProfileID      uuid.UUID `gorm:"type:uuid;not null" json:"profile_id"`
-	CategoryID     *int      `json:"category_id"`
-	ImageURL       *string   `json:"image_url"`
-	Description    string    `gorm:"not null" json:"description"`
+	CategoryID     *int             `json:"category_id"`
+	ImageURLs      pq.StringArray   `gorm:"type:text[]" json:"image_urls"`
+	Description    string           `gorm:"not null" json:"description"`
 	PhoneNumber    *string   `json:"phone_number,omitempty"`
 	Latitude       float64   `json:"latitude"`
 	Longitude      float64   `json:"longitude"`
