@@ -48,9 +48,12 @@ type Repository interface {
 	// Comments
 	CreateComment(comment *model.Comment) error
 	GetCommentsByReportID(reportID uuid.UUID) ([]model.Comment, error)
+	GetCommentCount(reportID uuid.UUID) (int64, error)
 
 	// Votes
 	VoteReport(userID, reportID uuid.UUID, voteType int) error
+	GetVoteCount(reportID uuid.UUID) (int64, error)
+	GetUserVoteForReport(userID, reportID uuid.UUID) (int, error)
 
 	// Leaderboard
 	GetLeaderboard() ([]model.Profile, error)
@@ -78,7 +81,7 @@ type Repository interface {
 
 	// Notifications
 	CreateNotification(notif *model.Notification) error
-	GetNotifications(role string) ([]model.Notification, error)
+	GetNotifications(userID uuid.UUID, role string) ([]model.Notification, error)
 	UpdateNotification(id uuid.UUID, title, message, notifType, targetRole string) error
 	DeleteNotification(id uuid.UUID) error
 }
@@ -227,6 +230,19 @@ func (r *repository) VerifyReport(reportID uuid.UUID) error {
 			return err
 		}
 
+		actionURL := "/history?open=" + reportID.String()
+		notif := model.Notification{
+			Title:        "Laporan Diverifikasi",
+			Message:      "Laporan Anda telah diverifikasi oleh petugas dan berstatus VALID.",
+			Type:         "INFO",
+			TargetRole:   "SPECIFIC_USER",
+			TargetUserID: &report.ProfileID,
+			ActionURL:    &actionURL,
+		}
+		if err := tx.Create(&notif).Error; err != nil {
+			return err
+		}
+
 		return nil
 	})
 }
@@ -243,6 +259,19 @@ func (r *repository) ResolveReport(reportID uuid.UUID) error {
 		}
 
 		if err := tx.Model(&report).Update("status", "WAITING_APPROVAL").Error; err != nil {
+			return err
+		}
+
+		actionURL := "/history?open=" + reportID.String()
+		notif := model.Notification{
+			Title:        "Laporan Ditangani",
+			Message:      "Laporan Anda telah ditangani dan menunggu konfirmasi/persetujuan Anda.",
+			Type:         "INFO",
+			TargetRole:   "SPECIFIC_USER",
+			TargetUserID: &report.ProfileID,
+			ActionURL:    &actionURL,
+		}
+		if err := tx.Create(&notif).Error; err != nil {
 			return err
 		}
 
@@ -392,9 +421,11 @@ func (r *repository) CreateComment(comment *model.Comment) error {
 			return err
 		}
 
-		// Update comment count on report
-		if err := tx.Model(&model.Report{}).Where("id = ?", comment.ReportID).UpdateColumn("comment_count", gorm.Expr("comment_count + ?", 1)).Error; err != nil {
-			return err
+		// Recalculate comment_count from COUNT(*) — guarantees accuracy vs cached +1
+		if err := tx.Model(&model.Report{}).Where("id = ?", comment.ReportID).
+			Update("comment_count", tx.Model(&model.Comment{}).Where("report_id = ?", comment.ReportID).Select("count(*)")).Error; err != nil {
+			// Fallback: increment if subquery fails
+			_ = tx.Model(&model.Report{}).Where("id = ?", comment.ReportID).UpdateColumn("comment_count", gorm.Expr("comment_count + ?", 1)).Error
 		}
 		return nil
 	})
@@ -407,6 +438,13 @@ func (r *repository) GetCommentsByReportID(reportID uuid.UUID) ([]model.Comment,
 	return comments, err
 }
 
+// GetCommentCount returns the exact number of comments for a report from the DB.
+func (r *repository) GetCommentCount(reportID uuid.UUID) (int64, error) {
+	var count int64
+	err := r.db.Model(&model.Comment{}).Where("report_id = ?", reportID).Count(&count).Error
+	return count, err
+}
+
 // ============================================================
 // VOTES
 // ============================================================
@@ -416,40 +454,70 @@ func (r *repository) VoteReport(userID, reportID uuid.UUID, voteType int) error 
 		var existingVote model.Vote
 		err := tx.Where("user_id = ? AND report_id = ?", userID, reportID).First(&existingVote).Error
 
-		voteDiff := 0
 		if err == gorm.ErrRecordNotFound {
 			// New vote
 			newVote := model.Vote{UserID: userID, ReportID: reportID, VoteType: voteType}
 			if err := tx.Create(&newVote).Error; err != nil {
 				return err
 			}
-			voteDiff = voteType
 		} else if err == nil {
 			// Existing vote
 			if existingVote.VoteType == voteType {
-				// Remove vote
+				// Remove vote (toggle off)
 				if err := tx.Delete(&existingVote).Error; err != nil {
 					return err
 				}
-				voteDiff = -voteType
 			} else {
-				// Change vote (e.g., from -1 to 1 means +2)
+				// Change vote direction
 				if err := tx.Model(&existingVote).Update("vote_type", voteType).Error; err != nil {
 					return err
 				}
-				voteDiff = voteType * 2
 			}
 		} else {
 			return err
 		}
 
-		// Update report vote_count
-		if err := tx.Model(&model.Report{}).Where("id = ?", reportID).UpdateColumn("vote_count", gorm.Expr("vote_count + ?", voteDiff)).Error; err != nil {
+		// Recalculate vote_count from actual rows (upvotes - downvotes) — prevents drift
+		var upvotes, downvotes int64
+		if err := tx.Model(&model.Vote{}).Where("report_id = ? AND vote_type = 1", reportID).Count(&upvotes).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&model.Vote{}).Where("report_id = ? AND vote_type = -1", reportID).Count(&downvotes).Error; err != nil {
+			return err
+		}
+		voteCount := int(upvotes - downvotes)
+
+		if err := tx.Model(&model.Report{}).Where("id = ?", reportID).Update("vote_count", voteCount).Error; err != nil {
 			return err
 		}
 
 		return nil
 	})
+}
+
+// GetVoteCount returns the net vote count (upvotes - downvotes) for a report.
+func (r *repository) GetVoteCount(reportID uuid.UUID) (int64, error) {
+	var upvotes, downvotes int64
+	if err := r.db.Model(&model.Vote{}).Where("report_id = ? AND vote_type = 1", reportID).Count(&upvotes).Error; err != nil {
+		return 0, err
+	}
+	if err := r.db.Model(&model.Vote{}).Where("report_id = ? AND vote_type = -1", reportID).Count(&downvotes).Error; err != nil {
+		return 0, err
+	}
+	return upvotes - downvotes, nil
+}
+
+// GetUserVoteForReport returns the user's vote_type for a report (1, -1, or 0 if not voted).
+func (r *repository) GetUserVoteForReport(userID, reportID uuid.UUID) (int, error) {
+	var vote model.Vote
+	err := r.db.Where("user_id = ? AND report_id = ?", userID, reportID).First(&vote).Error
+	if err == gorm.ErrRecordNotFound {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return vote.VoteType, nil
 }
 
 // ============================================================
@@ -628,16 +696,16 @@ func (r *repository) CreateNotification(notif *model.Notification) error {
 	return r.db.Create(notif).Error
 }
 
-func (r *repository) GetNotifications(role string) ([]model.Notification, error) {
+func (r *repository) GetNotifications(userID uuid.UUID, role string) ([]model.Notification, error) {
 	var notifs []model.Notification
 	query := r.db.Preload("Creator").Order("created_at DESC").Limit(50)
 	
-	if role == "super_admin" || role == "admin" {
+	if role == "super_admin" || role == "admin" || role == "SUPERADMIN" || role == "ADMIN" {
 		err := query.Find(&notifs).Error
 		return notifs, err
 	}
 
-	err := query.Where("target_role = ? OR target_role = ?", "ALL", role).Find(&notifs).Error
+	err := query.Where("target_role IN (?) OR target_user_id = ?", []string{"ALL", role}, userID).Find(&notifs).Error
 	return notifs, err
 }
 
