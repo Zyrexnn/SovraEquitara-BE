@@ -83,6 +83,9 @@ func main() {
 	api.Get("/reports/:id/comments", h.GetComments)
 	api.Get("/leaderboard", h.GetLeaderboard)
 
+	// Real-time SSE stream (public — no auth required to receive events)
+	api.Get("/events", h.SSEHandler)
+
 	// Profile Listing (Public for profile popup)
 	api.Get("/profiles", h.GetAllProfiles)
 	api.Get("/profiles/:id", h.GetProfileByID)
@@ -96,6 +99,7 @@ func main() {
 	protected.Delete("/reports/:id", h.DeleteReport)
 	protected.Post("/reports/:id/comments", h.AddComment)
 	protected.Post("/reports/:id/vote", h.VoteReport)
+	protected.Get("/reports/:id/vote-status", h.GetVoteStatus)
 	protected.Patch("/reports/:id/approve-resolution", h.ApproveReportResolution)
 	protected.Patch("/reports/:id/reject-resolution", h.RejectReportResolution)
 	protected.Get("/reports/stats", h.GetReportStats)

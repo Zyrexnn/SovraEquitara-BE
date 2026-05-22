@@ -1,14 +1,16 @@
 package handler
 
 import (
+	"bufio"
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"log"
 	"math/rand"
-	"net/smtp"
-	"time"
-	"bytes"
-	"encoding/json"
 	"net/http"
+	"net/smtp"
+	"sync"
+	"time"
 
 	"sovraequitara-be/internal/config"
 	"sovraequitara-be/internal/model"
@@ -23,12 +25,63 @@ import (
 type Handler struct {
 	Repo   repository.Repository
 	Config *config.Config
+	Hub    *SSEHub
 }
 
 func NewHandler(repo repository.Repository, cfg *config.Config) *Handler {
 	return &Handler{
 		Repo:   repo,
 		Config: cfg,
+		Hub:    NewSSEHub(),
+	}
+}
+
+// ============================================================
+// SSE HUB — Real-time broadcast to all connected clients
+// ============================================================
+
+// SSEHub manages all active SSE client connections.
+type SSEHub struct {
+	mu      sync.RWMutex
+	clients map[chan []byte]struct{}
+}
+
+// NewSSEHub creates and returns a new SSEHub.
+func NewSSEHub() *SSEHub {
+	return &SSEHub{
+		clients: make(map[chan []byte]struct{}),
+	}
+}
+
+// addClient registers a new SSE client channel.
+func (h *SSEHub) addClient(ch chan []byte) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.clients[ch] = struct{}{}
+}
+
+// removeClient deregisters an SSE client channel.
+func (h *SSEHub) removeClient(ch chan []byte) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	delete(h.clients, ch)
+}
+
+// Broadcast sends an SSEEvent as JSON to all connected clients.
+func (h *SSEHub) Broadcast(event model.SSEEvent) {
+	payload, err := json.Marshal(event)
+	if err != nil {
+		log.Printf("[SSE] Failed to marshal event: %v", err)
+		return
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	for ch := range h.clients {
+		select {
+		case ch <- payload:
+		default:
+			// Drop if client channel is full (slow consumer)
+		}
 	}
 }
 
@@ -716,6 +769,14 @@ func (h *Handler) AddComment(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal menambahkan komentar"})
 	}
 
+	// Broadcast updated comment count to all SSE clients
+	commentCount, _ := h.Repo.GetCommentCount(reportID)
+	h.Hub.Broadcast(model.SSEEvent{
+		EventType:    "comment_update",
+		ReportID:     reportID,
+		CommentCount: int(commentCount),
+	})
+
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Komentar berhasil ditambahkan", "data": comment})
 }
 
@@ -756,7 +817,81 @@ func (h *Handler) VoteReport(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal memberikan vote"})
 	}
 
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Vote berhasil disimpan"})
+	// Broadcast updated vote count to all SSE clients
+	voteCount, _ := h.Repo.GetVoteCount(reportID)
+	h.Hub.Broadcast(model.SSEEvent{
+		EventType: "vote_update",
+		ReportID:  reportID,
+		VoteCount: int(voteCount),
+	})
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Vote berhasil disimpan", "vote_count": voteCount})
+}
+
+// GetVoteStatus returns the current user's vote type for a given report (1, -1, or 0 = not voted).
+func (h *Handler) GetVoteStatus(c *fiber.Ctx) error {
+	userIDStr := c.Locals("userID").(string)
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized"})
+	}
+
+	reportIDStr := c.Params("id")
+	reportID, err := uuid.Parse(reportIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Bad Request"})
+	}
+
+	voteType, err := h.Repo.GetUserVoteForReport(userID, reportID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal mengambil status vote"})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"vote_type": voteType})
+}
+
+// SSEHandler handles Server-Sent Events connections.
+// Clients connect to GET /api/events and receive real-time vote/comment updates.
+func (h *Handler) SSEHandler(c *fiber.Ctx) error {
+	c.Set("Content-Type", "text/event-stream")
+	c.Set("Cache-Control", "no-cache")
+	c.Set("Connection", "keep-alive")
+	c.Set("Access-Control-Allow-Origin", "*")
+	c.Set("X-Accel-Buffering", "no") // Disable Nginx buffering if proxied
+
+	// Create a buffered channel for this client
+	ch := make(chan []byte, 32)
+	h.Hub.addClient(ch)
+
+	c.Context().SetBodyStreamWriter(func(w *bufio.Writer) {
+		// Send initial keep-alive comment
+		fmt.Fprintf(w, ": connected\n\n")
+		w.Flush()
+
+		ticker := time.NewTicker(25 * time.Second)
+		defer ticker.Stop()
+		defer h.Hub.removeClient(ch)
+
+		for {
+			select {
+			case payload, ok := <-ch:
+				if !ok {
+					return
+				}
+				fmt.Fprintf(w, "data: %s\n\n", payload)
+				if err := w.Flush(); err != nil {
+					return // Client disconnected
+				}
+			case <-ticker.C:
+				// Heartbeat to keep connection alive
+				fmt.Fprintf(w, ": heartbeat\n\n")
+				if err := w.Flush(); err != nil {
+					return
+				}
+			}
+		}
+	})
+	return nil
 }
 
 // ============================================================
@@ -1159,8 +1294,10 @@ func (h *Handler) ReplyChatMessage(c *fiber.Ctx) error {
 
 func (h *Handler) GetNotifications(c *fiber.Ctx) error {
 	role := c.Locals("role").(string)
+	userIDStr := c.Locals("userID").(string)
+	userID, _ := uuid.Parse(userIDStr)
 	
-	notifs, err := h.Repo.GetNotifications(role)
+	notifs, err := h.Repo.GetNotifications(userID, role)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal memuat notifikasi"})
 	}
