@@ -627,7 +627,47 @@ func (h *Handler) ResolveReport(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal menyelesaikan laporan"})
 	}
 
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Laporan berhasil diselesaikan"})
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Laporan berhasil ditandai menunggu persetujuan pelapor"})
+}
+
+func (h *Handler) ApproveReportResolution(c *fiber.Ctx) error {
+	userIDStr := c.Locals("userID").(string)
+	profileID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized"})
+	}
+
+	reportIDStr := c.Params("id")
+	reportID, err := uuid.Parse(reportIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Bad Request"})
+	}
+
+	if err := h.Repo.ApproveResolution(reportID, profileID); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal menyetujui penyelesaian laporan"})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Penyelesaian laporan disetujui, laporan telah Selesai"})
+}
+
+func (h *Handler) RejectReportResolution(c *fiber.Ctx) error {
+	userIDStr := c.Locals("userID").(string)
+	profileID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized"})
+	}
+
+	reportIDStr := c.Params("id")
+	reportID, err := uuid.Parse(reportIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Bad Request"})
+	}
+
+	if err := h.Repo.RejectResolution(reportID, profileID); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal menolak penyelesaian laporan"})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Penyelesaian laporan ditolak, status dikembalikan ke Diproses"})
 }
 
 func (h *Handler) CancelReport(c *fiber.Ctx) error {

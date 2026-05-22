@@ -96,6 +96,8 @@ func main() {
 	protected.Delete("/reports/:id", h.DeleteReport)
 	protected.Post("/reports/:id/comments", h.AddComment)
 	protected.Post("/reports/:id/vote", h.VoteReport)
+	protected.Patch("/reports/:id/approve-resolution", h.ApproveReportResolution)
+	protected.Patch("/reports/:id/reject-resolution", h.RejectReportResolution)
 	protected.Get("/reports/stats", h.GetReportStats)
 	protected.Get("/profile", h.GetProfile)
 	protected.Put("/profile", h.UpdateProfile)
