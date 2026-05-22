@@ -181,10 +181,12 @@ CREATE INDEX IF NOT EXISTS idx_conversations_last_message ON conversations(last_
 -- ============================================================
 CREATE TABLE IF NOT EXISTS notifications (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    title TEXT NOT NULL,
+    title VARCHAR(255) NOT NULL,
     message TEXT NOT NULL,
-    type TEXT NOT NULL DEFAULT 'INFO' CHECK (type IN ('INFO', 'WARNING', 'EMERGENCY')),
-    target_role TEXT NOT NULL DEFAULT 'ALL' CHECK (target_role IN ('ALL', 'USER', 'admin', 'super_admin')),
+    type VARCHAR(50) NOT NULL CHECK (type IN ('INFO', 'WARNING', 'EMERGENCY')),
+    target_role VARCHAR(50) NOT NULL CHECK (target_role IN ('ALL', 'USER', 'ADMIN', 'SUPERADMIN', 'SPECIFIC_USER')),
+    target_user_id UUID REFERENCES profiles(id) ON DELETE CASCADE,
+    action_url TEXT,
     created_by UUID REFERENCES profiles(id) ON DELETE SET NULL,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );

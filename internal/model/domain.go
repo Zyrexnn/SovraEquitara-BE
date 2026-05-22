@@ -159,20 +159,37 @@ type SendMessageRequest struct {
 // ============================================================
 
 type Notification struct {
-	ID         uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
-	Title      string    `gorm:"not null" json:"title"`
-	Message    string    `gorm:"not null" json:"message"`
-	Type       string    `gorm:"default:'INFO'" json:"type"`               // INFO, WARNING, EMERGENCY
-	TargetRole string    `gorm:"default:'ALL'" json:"target_role"`         // ALL, USER, admin, super_admin
-	CreatedBy  *uuid.UUID `gorm:"type:uuid" json:"created_by"`             // Can be null if system generated
-	CreatedAt  time.Time `json:"created_at"`
-	
-	Creator    *Profile `gorm:"foreignKey:CreatedBy" json:"creator,omitempty"`
+	ID           uuid.UUID  `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	Title        string     `gorm:"not null" json:"title"`
+	Message      string     `gorm:"not null" json:"message"`
+	Type         string     `gorm:"default:'INFO'" json:"type"`               // INFO, WARNING, EMERGENCY
+	TargetRole   string     `gorm:"default:'ALL'" json:"target_role"`         // ALL, USER, ADMIN, SUPERADMIN, SPECIFIC_USER
+	TargetUserID *uuid.UUID `gorm:"type:uuid" json:"target_user_id"`          // For targeted notifications
+	ActionURL    *string    `json:"action_url"`                               // URL to redirect user when clicked
+	CreatedBy    *uuid.UUID `gorm:"type:uuid" json:"created_by"`              // Can be null if system generated
+	CreatedAt    time.Time  `json:"created_at"`
+
+	Creator *Profile `gorm:"foreignKey:CreatedBy" json:"creator,omitempty"`
 }
 
 type CreateNotificationRequest struct {
-	Title      string `json:"title" validate:"required"`
-	Message    string `json:"message" validate:"required"`
-	Type       string `json:"type" validate:"required"`
-	TargetRole string `json:"target_role" validate:"required"`
+	Title        string     `json:"title" validate:"required"`
+	Message      string     `json:"message" validate:"required"`
+	Type         string     `json:"type" validate:"required"`
+	TargetRole   string     `json:"target_role" validate:"required"`
+	TargetUserID *uuid.UUID `json:"target_user_id,omitempty"`
+	ActionURL    *string    `json:"action_url,omitempty"`
+}
+
+// ============================================================
+// SSE (Server-Sent Events) SYSTEM
+// ============================================================
+
+// SSEEvent is the payload broadcast to all connected SSE clients.
+// EventType can be "vote_update" or "comment_update".
+type SSEEvent struct {
+	EventType    string    `json:"event"`
+	ReportID     uuid.UUID `json:"report_id"`
+	VoteCount    int       `json:"vote_count,omitempty"`
+	CommentCount int       `json:"comment_count,omitempty"`
 }
