@@ -150,14 +150,14 @@ func (r *repository) GetCategories() ([]model.Category, error) {
 // ============================================================
 
 func (r *repository) CreateReport(report *model.Report) error {
-	query := `INSERT INTO reports (profile_id, category_id, image_url, description, phone_number, latitude, longitude, location_detail) 
+	query := `INSERT INTO reports (profile_id, category_id, image_urls, description, phone_number, latitude, longitude, location_detail) 
 			  VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, created_at, updated_at`
-	return r.db.Raw(query, report.ProfileID, report.CategoryID, report.ImageURL, report.Description, report.PhoneNumber, report.Latitude, report.Longitude, report.LocationDetail).Scan(report).Error
+	return r.db.Raw(query, report.ProfileID, report.CategoryID, report.ImageURLs, report.Description, report.PhoneNumber, report.Latitude, report.Longitude, report.LocationDetail).Scan(report).Error
 }
 
 func (r *repository) GetReportsByProfileID(profileID uuid.UUID) ([]model.Report, error) {
 	var reports []model.Report
-	query := `SELECT id, profile_id, category_id, image_url, description, phone_number, 
+	query := `SELECT id, profile_id, category_id, image_urls, description, phone_number, 
 			  latitude, longitude, location_detail, vote_count, comment_count,
 			  status, created_at, updated_at 
 			  FROM reports WHERE profile_id = $1 ORDER BY created_at DESC`
@@ -179,14 +179,14 @@ func (r *repository) GetAllReports(statusFilter, sortBy string) ([]model.Report,
 	}
 
 	if statusFilter != "" {
-		query := `SELECT id, profile_id, category_id, image_url, description, phone_number, 
+		query := `SELECT id, profile_id, category_id, image_urls, description, phone_number, 
 				  latitude, longitude, location_detail, vote_count, comment_count,
 				  status, created_at, updated_at 
 				  FROM reports WHERE status = $1 ORDER BY ` + orderClause
 		err := r.db.Raw(query, statusFilter).Scan(&reports).Error
 		return reports, err
 	}
-	query := `SELECT id, profile_id, category_id, image_url, description, phone_number, 
+	query := `SELECT id, profile_id, category_id, image_urls, description, phone_number, 
 			  latitude, longitude, location_detail, vote_count, comment_count,
 			  status, created_at, updated_at 
 			  FROM reports ORDER BY ` + orderClause
@@ -207,7 +207,7 @@ func (r *repository) GetPublicReports(sortBy string) ([]model.Report, error) {
 		orderClause = "category_id ASC, created_at DESC"
 	}
 
-	query := `SELECT id, profile_id, category_id, image_url, description, phone_number, 
+	query := `SELECT id, profile_id, category_id, image_urls, description, phone_number, 
 			  latitude, longitude, location_detail, vote_count, comment_count,
 			  status, created_at, updated_at 
 			  FROM reports WHERE status IN ('VALID', 'WAITING_APPROVAL', 'RESOLVED') ORDER BY ` + orderClause
@@ -705,7 +705,7 @@ func (r *repository) GetNotifications(userID uuid.UUID, role string) ([]model.No
 		return notifs, err
 	}
 
-	err := query.Where("target_role IN (?) OR target_user_id = ?", []string{"ALL", role}, userID).Find(&notifs).Error
+	err := query.Where("target_role IN (?) OR (target_role = 'SPECIFIC_USER' AND target_user_id = ?)", []string{"ALL", role}, userID).Find(&notifs).Error
 	return notifs, err
 }
 
