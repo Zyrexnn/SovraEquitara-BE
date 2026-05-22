@@ -49,7 +49,7 @@ CREATE TABLE IF NOT EXISTS reports (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     profile_id UUID NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
     category_id INTEGER REFERENCES categories(id),
-    image_url TEXT,
+    image_urls TEXT[],
     description TEXT NOT NULL,
     phone_number TEXT,
     latitude DOUBLE PRECISION NOT NULL,
@@ -64,7 +64,14 @@ CREATE TABLE IF NOT EXISTS reports (
 
 -- ALTER TABLE untuk memastikan kolom-kolom baru ditambahkan jika tabel reports sudah ada
 ALTER TABLE reports ADD COLUMN IF NOT EXISTS category_id INTEGER REFERENCES categories(id);
-ALTER TABLE reports ADD COLUMN IF NOT EXISTS image_url TEXT;
+ALTER TABLE reports ADD COLUMN IF NOT EXISTS image_urls TEXT[];
+-- Optional: migrate data from old image_url if it existed
+DO $$ 
+BEGIN
+  IF EXISTS(SELECT * FROM information_schema.columns WHERE table_name='reports' AND column_name='image_url') THEN
+    UPDATE reports SET image_urls = ARRAY[image_url] WHERE image_url IS NOT NULL AND image_urls IS NULL;
+  END IF;
+END $$;
 ALTER TABLE reports ADD COLUMN IF NOT EXISTS vote_count INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE reports ADD COLUMN IF NOT EXISTS comment_count INTEGER NOT NULL DEFAULT 0;
 
