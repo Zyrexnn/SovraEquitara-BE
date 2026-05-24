@@ -107,6 +107,7 @@ func main() {
 	protected.Put("/profile", h.UpdateProfile)
 	protected.Post("/profile/avatar", h.UploadAvatar)
 	protected.Get("/notifications", h.GetNotifications)
+	protected.Post("/ai-assistant", h.UserAIAssistant)
 
 	// Chat Routes (any authenticated user can chat)
 	protected.Post("/chat/send", h.SendChatMessage)

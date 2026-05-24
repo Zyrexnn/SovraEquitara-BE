@@ -1437,3 +1437,67 @@ func (h *Handler) GetProfileByID(c *fiber.Ctx) error {
 		"created_at": profile.CreatedAt,
 	}})
 }
+
+// ============================================================
+// USER AI ASSISTANT
+// ============================================================
+
+func (h *Handler) UserAIAssistant(c *fiber.Ctx) error {
+	var req model.AIAssistantRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request"})
+	}
+
+	userIDStr := c.Locals("userID").(string)
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized"})
+	}
+	
+	// Fetch some context from DB specific to this user
+	reports, _ := h.Repo.GetReportsByProfileID(userID)
+	var contextStr string
+	for i, r := range reports {
+		if i >= 10 { // Limit context to latest 10 reports
+			break
+		}
+		contextStr += fmt.Sprintf("Report ID: %s, Category: %v, Description: %s, Status: %s, Location: %s\n", r.ID, r.CategoryID, r.Description, r.Status, r.LocationDetail)
+	}
+	systemPrompt := `You are a friendly AI Assistant for citizens using the SovraEquitara platform. 
+SovraEquitara is a citizen reporting platform that aims to resolve issues efficiently.
+Your role is to help the citizen understand how to make reports, track their reports, and give helpful advice based on the provided data.
+IMPORTANT: You must ONLY answer questions related to SovraEquitara, their reports, or making reports. If the user asks something entirely irrelevant, you MUST decline politely and state that you are the SovraEquitara AI Assistant and can only assist with platform-related matters.
+Gunakan Bahasa Indonesia yang ramah.
+Here are the user's recent reports (if any):
+` + contextStr
+
+	// User AI always uses local model
+	payload := LocalChatRequest{
+		Model: "qwen2.5-vl-3b-instruct",
+		Messages: []LocalMessage{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: req.Query},
+		},
+	}
+	body, _ := json.Marshal(payload)
+
+	resp, err := http.Post("http://127.0.0.1:1234/v1/chat/completions", "application/json", bytes.NewBuffer(body))
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Local AI is unreachable"})
+	}
+	defer resp.Body.Close()
+
+	var res map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&res)
+
+	choices, ok := res["choices"].([]interface{})
+	if !ok || len(choices) == 0 {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Invalid local AI response"})
+	}
+
+	choice := choices[0].(map[string]interface{})
+	message := choice["message"].(map[string]interface{})
+	content := message["content"].(string)
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"response": content})
+}

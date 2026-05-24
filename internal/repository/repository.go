@@ -701,7 +701,7 @@ func (r *repository) GetNotifications(userID uuid.UUID, role string) ([]model.No
 	query := r.db.Preload("Creator").Order("created_at DESC").Limit(50)
 	
 	if role == "super_admin" || role == "admin" || role == "SUPERADMIN" || role == "ADMIN" {
-		err := query.Find(&notifs).Error
+		err := query.Where("target_role != 'SPECIFIC_USER' OR target_user_id = ?", userID).Find(&notifs).Error
 		return notifs, err
 	}
 
