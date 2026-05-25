@@ -157,11 +157,7 @@ func (r *repository) CreateReport(report *model.Report) error {
 
 func (r *repository) GetReportsByProfileID(profileID uuid.UUID) ([]model.Report, error) {
 	var reports []model.Report
-	query := `SELECT id, profile_id, category_id, image_urls, description, phone_number, 
-			  latitude, longitude, location_detail, vote_count, comment_count,
-			  status, created_at, updated_at 
-			  FROM reports WHERE profile_id = $1 ORDER BY created_at DESC`
-	err := r.db.Raw(query, profileID).Scan(&reports).Error
+	err := r.db.Preload("Profile").Where("profile_id = ?", profileID).Order("created_at DESC").Find(&reports).Error
 	return reports, err
 }
 
@@ -178,19 +174,11 @@ func (r *repository) GetAllReports(statusFilter, sortBy string) ([]model.Report,
 		orderClause = "category_id ASC, created_at DESC"
 	}
 
+	query := r.db.Preload("Profile").Order(orderClause)
 	if statusFilter != "" {
-		query := `SELECT id, profile_id, category_id, image_urls, description, phone_number, 
-				  latitude, longitude, location_detail, vote_count, comment_count,
-				  status, created_at, updated_at 
-				  FROM reports WHERE status = $1 ORDER BY ` + orderClause
-		err := r.db.Raw(query, statusFilter).Scan(&reports).Error
-		return reports, err
+		query = query.Where("status = ?", statusFilter)
 	}
-	query := `SELECT id, profile_id, category_id, image_urls, description, phone_number, 
-			  latitude, longitude, location_detail, vote_count, comment_count,
-			  status, created_at, updated_at 
-			  FROM reports ORDER BY ` + orderClause
-	err := r.db.Raw(query).Scan(&reports).Error
+	err := query.Find(&reports).Error
 	return reports, err
 }
 
@@ -207,11 +195,7 @@ func (r *repository) GetPublicReports(sortBy string) ([]model.Report, error) {
 		orderClause = "category_id ASC, created_at DESC"
 	}
 
-	query := `SELECT id, profile_id, category_id, image_urls, description, phone_number, 
-			  latitude, longitude, location_detail, vote_count, comment_count,
-			  status, created_at, updated_at 
-			  FROM reports WHERE status IN ('VALID', 'WAITING_APPROVAL', 'RESOLVED') ORDER BY ` + orderClause
-	err := r.db.Raw(query).Scan(&reports).Error
+	err := r.db.Preload("Profile").Where("status IN ('VALID', 'WAITING_APPROVAL', 'RESOLVED')").Order(orderClause).Find(&reports).Error
 	return reports, err
 }
 
@@ -401,11 +385,11 @@ func (r *repository) ToggleSaveReport(adminID, reportID uuid.UUID) (bool, error)
 
 func (r *repository) GetSavedReports(adminID uuid.UUID) ([]model.Report, error) {
 	var reports []model.Report
-	query := `SELECT r.* FROM reports r 
-			  JOIN saved_reports sr ON r.id = sr.report_id 
-			  WHERE sr.admin_id = $1 
-			  ORDER BY sr.created_at DESC`
-	err := r.db.Raw(query, adminID).Scan(&reports).Error
+	err := r.db.Preload("Profile").
+		Joins("JOIN saved_reports sr ON reports.id = sr.report_id").
+		Where("sr.admin_id = ?", adminID).
+		Order("sr.created_at DESC").
+		Find(&reports).Error
 	return reports, err
 }
 

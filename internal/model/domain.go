@@ -41,6 +41,8 @@ type Report struct {
 	Status         string    `gorm:"default:'PENDING'" json:"status"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
+
+	Profile *Profile `gorm:"foreignKey:ProfileID" json:"profile,omitempty"`
 }
 
 type Comment struct {
