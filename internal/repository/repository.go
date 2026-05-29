@@ -138,7 +138,14 @@ func (r *repository) UpdateAvatar(id uuid.UUID, avatarURL string) error {
 }
 
 func (r *repository) UpdatePasswordByEmail(email, passwordHash string) error {
-	return r.db.Model(&model.Profile{}).Where("email = ?", email).Update("password_hash", passwordHash).Error
+	tx := r.db.Model(&model.Profile{}).Where("email = ?", email).Update("password_hash", passwordHash)
+	if tx.Error != nil {
+		return tx.Error
+	}
+	if tx.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
 }
 
 // ============================================================
@@ -594,6 +601,9 @@ func (r *repository) DeleteOTP(email string) error {
 // ============================================================
 
 func (r *repository) SaveForgotPasswordOTP(email, code string) error {
+	// Auto Housekeeping: Delete expired OTPs older than 10 minutes
+	_ = r.db.Exec("DELETE FROM forgot_password_otps WHERE created_at < NOW() - INTERVAL '10 minutes'")
+
 	query := `INSERT INTO forgot_password_otps (email, code, created_at) 
 	          VALUES ($1, $2, NOW()) 
 	          ON CONFLICT (email) DO UPDATE SET code = EXCLUDED.code, created_at = NOW()`
