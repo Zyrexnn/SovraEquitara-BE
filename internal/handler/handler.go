@@ -318,7 +318,7 @@ func (h *Handler) AuthLogin(c *fiber.Ctx) error {
 		"user": map[string]interface{}{
 			"id":     profile.ID.String(),
 			"email":  profile.Email,
-			"name":   profile.FullName,
+			"full_name":   profile.FullName,
 			"role":   profile.Role,
 			"points": profile.Points,
 		},
