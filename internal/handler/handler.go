@@ -12,6 +12,7 @@ import (
 	"os"
 	"sync"
 	"time"
+	"strings"
 
 	"sovraequitara-be/internal/config"
 	"sovraequitara-be/internal/model"
@@ -1321,11 +1322,18 @@ func (h *Handler) CreateNotification(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Input tidak valid"})
 	}
 
+	targetRole := strings.ToUpper(req.TargetRole)
+	if targetRole == "CITIZEN" {
+		targetRole = "USER"
+	} else if targetRole == "SUPER_ADMIN" {
+		targetRole = "SUPERADMIN"
+	}
+
 	notif := &model.Notification{
 		Title:      req.Title,
 		Message:    req.Message,
 		Type:       req.Type,
-		TargetRole: req.TargetRole,
+		TargetRole: targetRole,
 		CreatedBy:  &creatorID,
 	}
 
@@ -1348,7 +1356,14 @@ func (h *Handler) UpdateNotification(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Input tidak valid"})
 	}
 
-	if err := h.Repo.UpdateNotification(notifID, req.Title, req.Message, req.Type, req.TargetRole); err != nil {
+	targetRoleUpdate := strings.ToUpper(req.TargetRole)
+	if targetRoleUpdate == "CITIZEN" {
+		targetRoleUpdate = "USER"
+	} else if targetRoleUpdate == "SUPER_ADMIN" {
+		targetRoleUpdate = "SUPERADMIN"
+	}
+
+	if err := h.Repo.UpdateNotification(notifID, req.Title, req.Message, req.Type, targetRoleUpdate); err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal memperbarui notifikasi"})
 	}
 
