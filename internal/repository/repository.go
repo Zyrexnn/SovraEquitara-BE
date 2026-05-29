@@ -288,6 +288,19 @@ func (r *repository) ApproveResolution(reportID, profileID uuid.UUID) error {
 			return err
 		}
 
+		actionURL := "/history?open=" + reportID.String()
+		notif := model.Notification{
+			Title:        "Penyelesaian Laporan Disetujui",
+			Message:      "Penyelesaian laporan Anda telah disetujui. Poin bonus keaktifan Anda bertambah +50!",
+			Type:         "INFO",
+			TargetRole:   "SPECIFIC_USER",
+			TargetUserID: &report.ProfileID,
+			ActionURL:    &actionURL,
+		}
+		if err := tx.Create(&notif).Error; err != nil {
+			return err
+		}
+
 		return nil
 	})
 }
@@ -304,6 +317,19 @@ func (r *repository) RejectResolution(reportID, profileID uuid.UUID) error {
 		}
 
 		if err := tx.Model(&report).Update("status", "VALID").Error; err != nil {
+			return err
+		}
+
+		actionURL := "/history?open=" + reportID.String()
+		notif := model.Notification{
+			Title:        "Penyelesaian Laporan Ditolak",
+			Message:      "Anda telah menolak penyelesaian laporan. Status laporan dikembalikan ke Diproses (VALID).",
+			Type:         "WARNING",
+			TargetRole:   "SPECIFIC_USER",
+			TargetUserID: &report.ProfileID,
+			ActionURL:    &actionURL,
+		}
+		if err := tx.Create(&notif).Error; err != nil {
 			return err
 		}
 
@@ -334,6 +360,19 @@ func (r *repository) CancelReport(reportID uuid.UUID) error {
 		}
 
 		if err := tx.Model(&model.Profile{}).Where("id = ?", report.ProfileID).Update("points", gorm.Expr("points + ?", pointDiff)).Error; err != nil {
+			return err
+		}
+
+		actionURL := "/history?open=" + reportID.String()
+		notif := model.Notification{
+			Title:        "Verifikasi Laporan Dibatalkan",
+			Message:      "Verifikasi aduan Anda dibatalkan oleh Super Admin kembali ke status PENDING. Poin keaktifan disesuaikan.",
+			Type:         "WARNING",
+			TargetRole:   "SPECIFIC_USER",
+			TargetUserID: &report.ProfileID,
+			ActionURL:    &actionURL,
+		}
+		if err := tx.Create(&notif).Error; err != nil {
 			return err
 		}
 
