@@ -43,6 +43,7 @@ type Report struct {
 	UpdatedAt      time.Time `json:"updated_at"`
 
 	Profile *Profile `gorm:"foreignKey:ProfileID" json:"profile,omitempty"`
+	Category *Category `gorm:"foreignKey:CategoryID" json:"category,omitempty"`
 }
 
 type Comment struct {

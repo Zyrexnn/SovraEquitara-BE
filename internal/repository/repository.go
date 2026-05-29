@@ -1,7 +1,10 @@
 package repository
 
 import (
+	"fmt"
 	"sovraequitara-be/internal/model"
+	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -84,6 +87,9 @@ type Repository interface {
 	GetNotifications(userID uuid.UUID, role string) ([]model.Notification, error)
 	UpdateNotification(id uuid.UUID, title, message, notifType, targetRole string) error
 	DeleteNotification(id uuid.UUID) error
+
+	// Database Backup
+	BackupDatabase() (string, error)
 }
 
 type repository struct {
@@ -157,7 +163,7 @@ func (r *repository) CreateReport(report *model.Report) error {
 
 func (r *repository) GetReportsByProfileID(profileID uuid.UUID) ([]model.Report, error) {
 	var reports []model.Report
-	err := r.db.Preload("Profile").Where("profile_id = ?", profileID).Order("created_at DESC").Find(&reports).Error
+	err := r.db.Preload("Profile").Preload("Category").Where("profile_id = ?", profileID).Order("created_at DESC").Find(&reports).Error
 	return reports, err
 }
 
@@ -174,7 +180,7 @@ func (r *repository) GetAllReports(statusFilter, sortBy string) ([]model.Report,
 		orderClause = "category_id ASC, created_at DESC"
 	}
 
-	query := r.db.Preload("Profile").Order(orderClause)
+	query := r.db.Preload("Profile").Preload("Category").Order(orderClause)
 	if statusFilter != "" {
 		query = query.Where("status = ?", statusFilter)
 	}
@@ -195,7 +201,7 @@ func (r *repository) GetPublicReports(sortBy string) ([]model.Report, error) {
 		orderClause = "category_id ASC, created_at DESC"
 	}
 
-	err := r.db.Preload("Profile").Where("status IN ('VALID', 'WAITING_APPROVAL', 'RESOLVED')").Order(orderClause).Find(&reports).Error
+	err := r.db.Preload("Profile").Preload("Category").Where("status IN ('VALID', 'WAITING_APPROVAL', 'RESOLVED')").Order(orderClause).Find(&reports).Error
 	return reports, err
 }
 
@@ -385,7 +391,7 @@ func (r *repository) ToggleSaveReport(adminID, reportID uuid.UUID) (bool, error)
 
 func (r *repository) GetSavedReports(adminID uuid.UUID) ([]model.Report, error) {
 	var reports []model.Report
-	err := r.db.Preload("Profile").
+	err := r.db.Preload("Profile").Preload("Category").
 		Joins("JOIN saved_reports sr ON reports.id = sr.report_id").
 		Where("sr.admin_id = ?", adminID).
 		Order("sr.created_at DESC").
@@ -704,4 +710,234 @@ func (r *repository) UpdateNotification(id uuid.UUID, title, message, notifType,
 
 func (r *repository) DeleteNotification(id uuid.UUID) error {
 	return r.db.Where("id = ?", id).Delete(&model.Notification{}).Error
+}
+
+func (r *repository) BackupDatabase() (string, error) {
+	var sqlBuilder strings.Builder
+
+	// Header to disable constraints and triggers temporarily during import
+	sqlBuilder.WriteString("-- SovraEquitara Database Backup\n")
+	sqlBuilder.WriteString(fmt.Sprintf("-- Generated at: %s\n\n", time.Now().Format(time.RFC3339)))
+	sqlBuilder.WriteString("SET session_replication_role = 'replica';\n\n")
+
+	escapeStr := func(s string) string {
+		return strings.ReplaceAll(s, "'", "''")
+	}
+
+	formatStrPtr := func(s *string) string {
+		if s == nil {
+			return "NULL"
+		}
+		return fmt.Sprintf("'%s'", escapeStr(*s))
+	}
+
+	formatIntPtr := func(i *int) string {
+		if i == nil {
+			return "NULL"
+		}
+		return fmt.Sprintf("%d", *i)
+	}
+
+	formatUUIDPtr := func(u *uuid.UUID) string {
+		if u == nil {
+			return "NULL"
+		}
+		return fmt.Sprintf("'%s'", u.String())
+	}
+
+	formatStrArray := func(arr []string) string {
+		if arr == nil {
+			return "NULL"
+		}
+		var escaped []string
+		for _, s := range arr {
+			escaped = append(escaped, fmt.Sprintf("'%s'", escapeStr(s)))
+		}
+		return fmt.Sprintf("ARRAY[%s]::TEXT[]", strings.Join(escaped, ", "))
+	}
+
+	formatTime := func(t time.Time) string {
+		return fmt.Sprintf("'%s'", t.Format("2006-01-02 15:04:05.000000-07"))
+	}
+
+	// 1. PROFILES
+	var profiles []model.Profile
+	if err := r.db.Find(&profiles).Error; err != nil {
+		return "", err
+	}
+	if len(profiles) > 0 {
+		sqlBuilder.WriteString("-- TRUNCATE profiles;\n")
+		sqlBuilder.WriteString("INSERT INTO profiles (id, email, password_hash, full_name, phone, avatar_url, points, role, created_at, updated_at) VALUES\n")
+		for i, p := range profiles {
+			comma := ","
+			if i == len(profiles)-1 {
+				comma = ";"
+			}
+			sqlBuilder.WriteString(fmt.Sprintf("('%s', '%s', '%s', '%s', '%s', %s, %d, '%s', %s, %s)%s\n",
+				p.ID.String(), escapeStr(p.Email), escapeStr(p.PasswordHash), escapeStr(p.FullName), escapeStr(p.Phone),
+				formatStrPtr(p.AvatarURL), p.Points, escapeStr(p.Role), formatTime(p.CreatedAt), formatTime(p.UpdatedAt), comma))
+		}
+		sqlBuilder.WriteString("\n")
+	}
+
+	// 2. CATEGORIES
+	var categories []model.Category
+	if err := r.db.Find(&categories).Error; err != nil {
+		return "", err
+	}
+	if len(categories) > 0 {
+		sqlBuilder.WriteString("-- TRUNCATE categories;\n")
+		sqlBuilder.WriteString("INSERT INTO categories (id, name, slug) VALUES\n")
+		for i, c := range categories {
+			comma := ","
+			if i == len(categories)-1 {
+				comma = ";"
+			}
+			sqlBuilder.WriteString(fmt.Sprintf("(%d, '%s', '%s')%s\n",
+				c.ID, escapeStr(c.Name), escapeStr(c.Slug), comma))
+		}
+		sqlBuilder.WriteString("\n")
+	}
+
+	// 3. REPORTS
+	var reports []model.Report
+	if err := r.db.Find(&reports).Error; err != nil {
+		return "", err
+	}
+	if len(reports) > 0 {
+		sqlBuilder.WriteString("-- TRUNCATE reports;\n")
+		sqlBuilder.WriteString("INSERT INTO reports (id, profile_id, category_id, image_urls, description, phone_number, latitude, longitude, location_detail, vote_count, comment_count, status, created_at, updated_at) VALUES\n")
+		for i, rp := range reports {
+			comma := ","
+			if i == len(reports)-1 {
+				comma = ";"
+			}
+			sqlBuilder.WriteString(fmt.Sprintf("('%s', '%s', %s, %s, '%s', %s, %f, %f, '%s', %d, %d, '%s', %s, %s)%s\n",
+				rp.ID.String(), rp.ProfileID.String(), formatIntPtr(rp.CategoryID), formatStrArray(rp.ImageURLs),
+				escapeStr(rp.Description), formatStrPtr(rp.PhoneNumber), rp.Latitude, rp.Longitude, escapeStr(rp.LocationDetail),
+				rp.VoteCount, rp.CommentCount, escapeStr(rp.Status), formatTime(rp.CreatedAt), formatTime(rp.UpdatedAt), comma))
+		}
+		sqlBuilder.WriteString("\n")
+	}
+
+	// 4. COMMENTS
+	var comments []model.Comment
+	if err := r.db.Find(&comments).Error; err != nil {
+		return "", err
+	}
+	if len(comments) > 0 {
+		sqlBuilder.WriteString("-- TRUNCATE comments;\n")
+		sqlBuilder.WriteString("INSERT INTO comments (id, report_id, user_id, content, created_at) VALUES\n")
+		for i, c := range comments {
+			comma := ","
+			if i == len(comments)-1 {
+				comma = ";"
+			}
+			sqlBuilder.WriteString(fmt.Sprintf("('%s', '%s', '%s', '%s', %s)%s\n",
+				c.ID.String(), c.ReportID.String(), c.UserID.String(), escapeStr(c.Content), formatTime(c.CreatedAt), comma))
+		}
+		sqlBuilder.WriteString("\n")
+	}
+
+	// 5. VOTES
+	var votes []model.Vote
+	if err := r.db.Find(&votes).Error; err != nil {
+		return "", err
+	}
+	if len(votes) > 0 {
+		sqlBuilder.WriteString("-- TRUNCATE votes;\n")
+		sqlBuilder.WriteString("INSERT INTO votes (user_id, report_id, vote_type) VALUES\n")
+		for i, v := range votes {
+			comma := ","
+			if i == len(votes)-1 {
+				comma = ";"
+			}
+			sqlBuilder.WriteString(fmt.Sprintf("('%s', '%s', %d)%s\n",
+				v.UserID.String(), v.ReportID.String(), v.VoteType, comma))
+		}
+		sqlBuilder.WriteString("\n")
+	}
+
+	// 6. SAVED REPORTS
+	var savedReports []model.SavedReport
+	if err := r.db.Find(&savedReports).Error; err != nil {
+		return "", err
+	}
+	if len(savedReports) > 0 {
+		sqlBuilder.WriteString("-- TRUNCATE saved_reports;\n")
+		sqlBuilder.WriteString("INSERT INTO saved_reports (admin_id, report_id, created_at) VALUES\n")
+		for i, sr := range savedReports {
+			comma := ","
+			if i == len(savedReports)-1 {
+				comma = ";"
+			}
+			sqlBuilder.WriteString(fmt.Sprintf("('%s', '%s', %s)%s\n",
+				sr.AdminID.String(), sr.ReportID.String(), formatTime(sr.CreatedAt), comma))
+		}
+		sqlBuilder.WriteString("\n")
+	}
+
+	// 7. CONVERSATIONS
+	var conversations []model.Conversation
+	if err := r.db.Find(&conversations).Error; err != nil {
+		return "", err
+	}
+	if len(conversations) > 0 {
+		sqlBuilder.WriteString("-- TRUNCATE conversations;\n")
+		sqlBuilder.WriteString("INSERT INTO conversations (id, participant_id, last_message, last_message_at, unread_count, created_at, updated_at) VALUES\n")
+		for i, cv := range conversations {
+			comma := ","
+			if i == len(conversations)-1 {
+				comma = ";"
+			}
+			sqlBuilder.WriteString(fmt.Sprintf("('%s', '%s', '%s', %s, %d, %s, %s)%s\n",
+				cv.ID.String(), cv.ParticipantID.String(), escapeStr(cv.LastMessage), formatTime(cv.LastMessageAt),
+				cv.UnreadCount, formatTime(cv.CreatedAt), formatTime(cv.UpdatedAt), comma))
+		}
+		sqlBuilder.WriteString("\n")
+	}
+
+	// 8. MESSAGES
+	var messages []model.Message
+	if err := r.db.Find(&messages).Error; err != nil {
+		return "", err
+	}
+	if len(messages) > 0 {
+		sqlBuilder.WriteString("-- TRUNCATE messages;\n")
+		sqlBuilder.WriteString("INSERT INTO messages (id, conversation_id, sender_id, content, is_read, created_at) VALUES\n")
+		for i, m := range messages {
+			comma := ","
+			if i == len(messages)-1 {
+				comma = ";"
+			}
+			sqlBuilder.WriteString(fmt.Sprintf("('%s', '%s', '%s', '%s', %t, %s)%s\n",
+				m.ID.String(), m.ConversationID.String(), m.SenderID.String(), escapeStr(m.Content), m.IsRead, formatTime(m.CreatedAt), comma))
+		}
+		sqlBuilder.WriteString("\n")
+	}
+
+	// 9. NOTIFICATIONS
+	var notifications []model.Notification
+	if err := r.db.Find(&notifications).Error; err != nil {
+		return "", err
+	}
+	if len(notifications) > 0 {
+		sqlBuilder.WriteString("-- TRUNCATE notifications;\n")
+		sqlBuilder.WriteString("INSERT INTO notifications (id, title, message, type, target_role, target_user_id, action_url, created_by, created_at) VALUES\n")
+		for i, n := range notifications {
+			comma := ","
+			if i == len(notifications)-1 {
+				comma = ";"
+			}
+			sqlBuilder.WriteString(fmt.Sprintf("('%s', '%s', '%s', '%s', '%s', %s, %s, %s, %s)%s\n",
+				n.ID.String(), escapeStr(n.Title), escapeStr(n.Message), escapeStr(n.Type), escapeStr(n.TargetRole),
+				formatUUIDPtr(n.TargetUserID), formatStrPtr(n.ActionURL), formatUUIDPtr(n.CreatedBy), formatTime(n.CreatedAt), comma))
+		}
+		sqlBuilder.WriteString("\n")
+	}
+
+	// Re-enable constraints and triggers
+	sqlBuilder.WriteString("SET session_replication_role = 'origin';\n")
+
+	return sqlBuilder.String(), nil
 }

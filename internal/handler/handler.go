@@ -9,6 +9,7 @@ import (
 	"math/rand"
 	"net/http"
 	"net/smtp"
+	"os"
 	"sync"
 	"time"
 
@@ -1500,4 +1501,40 @@ Here are the user's recent reports (if any):
 	content := message["content"].(string)
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{"response": content})
+}
+
+// ============================================================
+// SUPER ADMIN — DATABASE BACKUP
+// ============================================================
+
+func (h *Handler) BackupDatabase(c *fiber.Ctx) error {
+	// 1. Get SQL dump string from Repository
+	sqlContent, err := h.Repo.BackupDatabase()
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal menghasilkan data cadangan database: " + err.Error()})
+	}
+
+	// 2. Ensure the backups directory exists
+	backupsDir := "./backups"
+	if err := os.MkdirAll(backupsDir, 0755); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal menyiapkan folder penyimpanan cadangan: " + err.Error()})
+	}
+
+	// 3. Generate filename with timestamp
+	timestamp := time.Now().Format("2006-01-02_150405")
+	filename := fmt.Sprintf("sovra_db_backup_%s.sql", timestamp)
+	filepath := fmt.Sprintf("%s/%s", backupsDir, filename)
+
+	// 4. Write SQL string to file
+	if err := os.WriteFile(filepath, []byte(sqlContent), 0644); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal menyimpan berkas cadangan database ke disk: " + err.Error()})
+	}
+
+	// 5. Return success and download URL
+	downloadURL := fmt.Sprintf("/backups/%s", filename)
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"message":      "Backup database berhasil dibuat",
+		"filename":     filename,
+		"download_url": downloadURL,
+	})
 }

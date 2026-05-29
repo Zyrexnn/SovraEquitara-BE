@@ -59,6 +59,7 @@ func main() {
 
 	// Serve static files for image uploads
 	app.Static("/uploads", "./uploads")
+	app.Static("/backups", "./backups")
 
 	// Health check
 	app.Get("/health", func(c *fiber.Ctx) error {
@@ -135,6 +136,9 @@ func main() {
 	
 	// Super Admin can cancel reports
 	superAdminGroup.Patch("/reports/:id/cancel", h.CancelReport)
+
+	// Database Backup
+	superAdminGroup.Post("/database/backup", h.BackupDatabase)
 	
 	// User Stats (Super Admin)
 	superAdminGroup.Get("/profiles/:id/stats", h.GetUserStats)
