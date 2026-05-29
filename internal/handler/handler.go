@@ -339,7 +339,9 @@ func (h *Handler) ForgotPassword(c *fiber.Ctx) error {
 
 	exists, _ := h.Repo.CheckEmailExists(req.Email)
 	if !exists {
-		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Email tidak ditemukan"})
+		// Log silently for security audits and debugging, but return generic success to user
+		log.Printf("[AUTH] ForgotPassword requested for non-registered email: %s\n", req.Email)
+		return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Kode OTP reset password telah dikirim ke email Anda jika terdaftar"})
 	}
 
 	otpCode := generateOTP()
@@ -350,7 +352,25 @@ func (h *Handler) ForgotPassword(c *fiber.Ctx) error {
 	go h.sendForgotPasswordEmail(req.Email, otpCode)
 	log.Printf("[AUTH] FORGOT PASSWORD OTP UNTUK %s: %s\n", req.Email, otpCode)
 
-	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Kode OTP reset password telah dikirim ke email Anda"})
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Kode OTP reset password telah dikirim ke email Anda jika terdaftar"})
+}
+
+type VerifyForgotPasswordOTPRequest struct {
+	Email string `json:"email" validate:"required"`
+	Token string `json:"token" validate:"required"`
+}
+
+func (h *Handler) VerifyForgotPasswordOTP(c *fiber.Ctx) error {
+	var req VerifyForgotPasswordOTPRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Data tidak valid"})
+	}
+
+	if err := h.Repo.VerifyForgotPasswordOTP(req.Email, req.Token); err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Kode OTP salah atau sudah kadaluarsa"})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Kode OTP valid"})
 }
 
 // ============================================================

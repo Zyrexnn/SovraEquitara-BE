@@ -76,6 +76,7 @@ func main() {
 	authGroup.Post("/verify", h.AuthVerify)
 	authGroup.Post("/admin-login", h.AdminLogin)
 	authGroup.Post("/forgot-password", h.ForgotPassword)
+	authGroup.Post("/verify-forgot-password-otp", h.VerifyForgotPasswordOTP)
 	authGroup.Post("/reset-password", h.ResetPassword)
 
 	// Public Routes (Data)
