@@ -82,6 +82,7 @@ func main() {
 	// Public Routes (Data)
 	api.Get("/categories", h.GetCategories)
 	api.Get("/public-reports", h.GetPublicReports)
+	api.Get("/reports/:id", h.GetReportByID)
 	api.Get("/reports/:id/comments", h.GetComments)
 	api.Get("/leaderboard", h.GetLeaderboard)
 
@@ -108,6 +109,7 @@ func main() {
 	protected.Get("/profile", h.GetProfile)
 	protected.Put("/profile", h.UpdateProfile)
 	protected.Post("/profile/avatar", h.UploadAvatar)
+	protected.Put("/profile/password", h.UpdateProfilePassword)
 	protected.Get("/notifications", h.GetNotifications)
 	protected.Post("/ai-assistant", h.UserAIAssistant)
 

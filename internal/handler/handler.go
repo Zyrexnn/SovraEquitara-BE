@@ -489,6 +489,49 @@ func (h *Handler) UpdateProfile(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Profil berhasil diperbarui"})
 }
 
+// UpdateProfilePassword — change password without OTP for any authenticated user (especially Admin/Super Admin).
+func (h *Handler) UpdateProfilePassword(c *fiber.Ctx) error {
+	userIDStr := c.Locals("userID").(string)
+	profileID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized"})
+	}
+
+	var req struct {
+		CurrentPassword string `json:"current_password"`
+		NewPassword     string `json:"new_password"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Data tidak valid"})
+	}
+	if len(req.CurrentPassword) == 0 || len(req.NewPassword) < 6 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Kata sandi baru minimal 6 karakter"})
+	}
+
+	// Fetch the user's current hashed password from the database
+	profile, err := h.Repo.GetProfileByID(profileID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal memuat profil"})
+	}
+
+	// Verify current password
+	if err := bcrypt.CompareHashAndPassword([]byte(profile.PasswordHash), []byte(req.CurrentPassword)); err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Kata sandi saat ini tidak benar"})
+	}
+
+	// Hash new password
+	hashed, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal memproses kata sandi baru"})
+	}
+
+	if err := h.Repo.UpdateProfilePassword(profileID, string(hashed)); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal memperbarui kata sandi"})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Kata sandi berhasil diperbarui"})
+}
+
 // ============================================================
 // CATEGORIES
 // ============================================================
@@ -623,6 +666,19 @@ func (h *Handler) GetAllReports(c *fiber.Ctx) error {
 	}
 
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{"data": reports})
+}
+
+func (h *Handler) GetReportByID(c *fiber.Ctx) error {
+	idStr := c.Params("id")
+	reportID, err := uuid.Parse(idStr)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "ID Laporan tidak valid"})
+	}
+	report, err := h.Repo.GetReportByID(reportID)
+	if err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "Laporan tidak ditemukan"})
+	}
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"data": report})
 }
 
 func (h *Handler) GetPublicReports(c *fiber.Ctx) error {

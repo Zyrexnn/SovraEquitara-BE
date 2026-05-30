@@ -21,12 +21,14 @@ type Repository interface {
 	GetProfileByID(id uuid.UUID) (*model.Profile, error)
 	UpdateProfile(id uuid.UUID, req model.UpdateProfileRequest) error
 	UpdateAvatar(id uuid.UUID, avatarURL string) error
+	UpdateProfilePassword(id uuid.UUID, passwordHash string) error
 
 	// Categories
 	GetCategories() ([]model.Category, error)
 
 	// Reports
 	CreateReport(report *model.Report) error
+	GetReportByID(id uuid.UUID) (model.Report, error)
 	GetReportsByProfileID(profileID uuid.UUID) ([]model.Report, error)
 	GetAllReports(statusFilter, sortBy string) ([]model.Report, error)
 	GetPublicReports(sortBy string) ([]model.Report, error)
@@ -137,6 +139,17 @@ func (r *repository) UpdateAvatar(id uuid.UUID, avatarURL string) error {
 	return r.db.Model(&model.Profile{}).Where("id = ?", id).Update("avatar_url", avatarURL).Error
 }
 
+func (r *repository) UpdateProfilePassword(id uuid.UUID, passwordHash string) error {
+	tx := r.db.Model(&model.Profile{}).Where("id = ?", id).Update("password_hash", passwordHash)
+	if tx.Error != nil {
+		return tx.Error
+	}
+	if tx.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
 func (r *repository) UpdatePasswordByEmail(email, passwordHash string) error {
 	tx := r.db.Model(&model.Profile{}).Where("email = ?", email).Update("password_hash", passwordHash)
 	if tx.Error != nil {
@@ -163,9 +176,15 @@ func (r *repository) GetCategories() ([]model.Category, error) {
 // ============================================================
 
 func (r *repository) CreateReport(report *model.Report) error {
-	query := `INSERT INTO reports (profile_id, category_id, image_urls, description, phone_number, latitude, longitude, location_detail) 
+	query := `INSERT INTO reports (profile_id, category_id, image_urls, description, phone_number, latitude, longitude, location_detail)
 			  VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, created_at, updated_at`
 	return r.db.Raw(query, report.ProfileID, report.CategoryID, report.ImageURLs, report.Description, report.PhoneNumber, report.Latitude, report.Longitude, report.LocationDetail).Scan(report).Error
+}
+
+func (r *repository) GetReportByID(id uuid.UUID) (model.Report, error) {
+	var report model.Report
+	err := r.db.Preload("Profile").Preload("Category").First(&report, "id = ?", id).Error
+	return report, err
 }
 
 func (r *repository) GetReportsByProfileID(profileID uuid.UUID) ([]model.Report, error) {
