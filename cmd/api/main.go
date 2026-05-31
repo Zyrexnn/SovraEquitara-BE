@@ -7,6 +7,7 @@ import (
 	"sovraequitara-be/internal/handler"
 	"sovraequitara-be/internal/middleware"
 	"sovraequitara-be/internal/repository"
+	"sovraequitara-be/internal/model"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
@@ -30,6 +31,9 @@ func main() {
 	}
 
 	log.Println("Database connected successfully!")
+
+	// Auto Migrate AI Chat History Tables
+	db.AutoMigrate(&model.AIThread{}, &model.AIMessage{})
 
 	// Initialize Repository and Handler
 	repo := repository.NewRepository(db)
@@ -125,6 +129,10 @@ func main() {
 	adminGroup.Patch("/reports/:id/verify", h.VerifyReport)
 	adminGroup.Patch("/reports/:id/resolve", h.ResolveReport)
 	adminGroup.Post("/ai-assistant", h.AIAssistant)
+	adminGroup.Get("/ai-assistant/threads", h.GetAIThreads)
+	adminGroup.Post("/ai-assistant/threads", h.CreateAIThread)
+	adminGroup.Get("/ai-assistant/threads/:id", h.GetAIThreadMessages)
+	adminGroup.Delete("/ai-assistant/threads/:id", h.DeleteAIThread)
 	adminGroup.Post("/notifications", h.CreateNotification)
 	adminGroup.Put("/notifications/:id", h.UpdateNotification)
 	adminGroup.Delete("/notifications/:id", h.DeleteNotification)

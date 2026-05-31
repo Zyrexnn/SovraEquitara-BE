@@ -1038,6 +1038,12 @@ type LocalMessage struct {
 }
 
 func (h *Handler) AIAssistant(c *fiber.Ctx) error {
+	userIDStr := c.Locals("userID").(string)
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized"})
+	}
+
 	var req model.AIAssistantRequest
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request"})
@@ -1068,15 +1074,50 @@ Permintaan untuk mencari, memfilter, meringkas, atau menampilkan laporan dengan 
 Berikut adalah daftar laporan warga terbaru yang tersedia di database saat ini:
 ` + contextStr
 
+	// Resolve or dynamically create thread ID
+	threadID := req.ThreadID
+	if threadID == uuid.Nil {
+		title := req.Query
+		if len(title) > 30 {
+			title = title[:27] + "..."
+		}
+		newThread, err := h.Repo.CreateAIThread(userID, title)
+		if err == nil {
+			threadID = newThread.ID
+		}
+	}
+
+	// Fetch past messages in thread if threadID is valid
+	var pastMessages []model.AIMessage
+	if threadID != uuid.Nil {
+		pastMessages, _ = h.Repo.GetAIMessagesByThreadID(threadID)
+	}
+
+	var responseText string
+
 	if req.Model == "local" {
 		// LM Studio
 		payload := LocalChatRequest{
 			Model: "qwen2.5-vl-3b-instruct",
 			Messages: []LocalMessage{
 				{Role: "system", Content: systemPrompt},
-				{Role: "user", Content: req.Query},
 			},
 		}
+
+		// Append past conversation history
+		for _, m := range pastMessages {
+			payload.Messages = append(payload.Messages, LocalMessage{
+				Role:    m.Role,
+				Content: m.Content,
+			})
+		}
+
+		// Append current query
+		payload.Messages = append(payload.Messages, LocalMessage{
+			Role:    "user",
+			Content: req.Query,
+		})
+
 		body, _ := json.Marshal(payload)
 
 		resp, err := http.Post("http://127.0.0.1:1234/v1/chat/completions", "application/json", bytes.NewBuffer(body))
@@ -1095,9 +1136,7 @@ Berikut adalah daftar laporan warga terbaru yang tersedia di database saat ini:
 
 		choice := choices[0].(map[string]interface{})
 		message := choice["message"].(map[string]interface{})
-		content := message["content"].(string)
-
-		return c.Status(fiber.StatusOK).JSON(fiber.Map{"response": content})
+		responseText = message["content"].(string)
 
 	} else {
 		// Gemini
@@ -1111,13 +1150,26 @@ Berikut adalah daftar laporan warga terbaru yang tersedia di database saat ini:
 			SystemInstruction: &GeminiSystem{
 				Parts: []GeminiPart{{Text: systemPrompt}},
 			},
-			Contents: []GeminiContent{
-				{
-					Role: "user",
-					Parts: []GeminiPart{{Text: req.Query}},
-				},
-			},
+			Contents: []GeminiContent{},
 		}
+
+		// Append past conversation history
+		for _, m := range pastMessages {
+			role := m.Role
+			if role == "assistant" {
+				role = "model"
+			}
+			payload.Contents = append(payload.Contents, GeminiContent{
+				Role:  role,
+				Parts: []GeminiPart{{Text: m.Content}},
+			})
+		}
+
+		// Append current query
+		payload.Contents = append(payload.Contents, GeminiContent{
+			Role:  "user",
+			Parts: []GeminiPart{{Text: req.Query}},
+		})
 
 		body, _ := json.Marshal(payload)
 		resp, err := http.Post(url, "application/json", bytes.NewBuffer(body))
@@ -1138,9 +1190,114 @@ Berikut adalah daftar laporan warga terbaru yang tersedia di database saat ini:
 		contentObj := candidate["content"].(map[string]interface{})
 		parts := contentObj["parts"].([]interface{})
 		firstPart := parts[0].(map[string]interface{})
-
-		return c.Status(fiber.StatusOK).JSON(fiber.Map{"response": firstPart["text"]})
+		responseText = firstPart["text"].(string)
 	}
+
+	// Save messages dynamically under the active thread
+	if threadID != uuid.Nil {
+		_ = h.Repo.AddAIMessage(threadID, "user", req.Query)
+		_ = h.Repo.AddAIMessage(threadID, "assistant", responseText)
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"response":  responseText,
+		"thread_id": threadID,
+	})
+}
+
+// ============================================================
+// AI CHAT HISTORY HANDLERS (Admin Exclusive)
+// ============================================================
+
+func (h *Handler) CreateAIThread(c *fiber.Ctx) error {
+	userIDStr := c.Locals("userID").(string)
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized"})
+	}
+
+	var body struct {
+		Title string `json:"title"`
+	}
+	if err := c.BodyParser(&body); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Invalid request"})
+	}
+	if body.Title == "" {
+		body.Title = "Obrolan Baru"
+	}
+
+	thread, err := h.Repo.CreateAIThread(userID, body.Title)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal membuat sesi obrolan"})
+	}
+
+	return c.Status(fiber.StatusCreated).JSON(fiber.Map{
+		"message": "Sesi obrolan berhasil dibuat",
+		"data":    thread,
+	})
+}
+
+func (h *Handler) GetAIThreads(c *fiber.Ctx) error {
+	userIDStr := c.Locals("userID").(string)
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized"})
+	}
+
+	threads, err := h.Repo.GetAIThreadsByUserID(userID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal memuat riwayat obrolan"})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"data": threads,
+	})
+}
+
+func (h *Handler) GetAIThreadMessages(c *fiber.Ctx) error {
+	userIDStr := c.Locals("userID").(string)
+	_, err := uuid.Parse(userIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized"})
+	}
+
+	threadIDStr := c.Params("id")
+	threadID, err := uuid.Parse(threadIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "ID Sesi tidak valid"})
+	}
+
+	messages, err := h.Repo.GetAIMessagesByThreadID(threadID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal memuat pesan"})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"data": messages,
+	})
+}
+
+func (h *Handler) DeleteAIThread(c *fiber.Ctx) error {
+	userIDStr := c.Locals("userID").(string)
+	userID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized"})
+	}
+
+	threadIDStr := c.Params("id")
+	threadID, err := uuid.Parse(threadIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "ID Sesi tidak valid"})
+	}
+
+	err = h.Repo.DeleteAIThread(threadID, userID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal menghapus sesi obrolan"})
+	}
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"message": "Sesi obrolan berhasil dihapus",
+	})
 }
 
 // ============================================================

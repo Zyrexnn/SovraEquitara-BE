@@ -120,9 +120,27 @@ type ReportStats struct {
 	Resolved int64 `json:"resolved"`
 }
 
+type AIThread struct {
+	ID        uuid.UUID   `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	UserID    uuid.UUID   `gorm:"type:uuid;not null;index" json:"user_id"`
+	Title     string      `gorm:"not null" json:"title"`
+	CreatedAt time.Time   `json:"created_at"`
+	UpdatedAt time.Time   `json:"updated_at"`
+	Messages  []AIMessage `gorm:"foreignKey:ThreadID;constraint:OnDelete:CASCADE" json:"messages,omitempty"`
+}
+
+type AIMessage struct {
+	ID        uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
+	ThreadID  uuid.UUID `gorm:"type:uuid;not null;index" json:"thread_id"`
+	Role      string    `gorm:"not null" json:"role"` // "user" or "assistant"
+	Content   string    `gorm:"not null" json:"content"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
 type AIAssistantRequest struct {
-	Query string `json:"query"`
-	Model string `json:"model"` // "local" or "gemini"
+	Query    string    `json:"query"`
+	Model    string    `json:"model"` // "local" or "gemini"
+	ThreadID uuid.UUID `json:"thread_id,omitempty"`
 }
 
 // ============================================================

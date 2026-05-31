@@ -92,6 +92,14 @@ type Repository interface {
 
 	// Database Backup
 	BackupDatabase() (string, error)
+
+	// AI Chat History
+	CreateAIThread(userID uuid.UUID, title string) (*model.AIThread, error)
+	GetAIThreadsByUserID(userID uuid.UUID) ([]model.AIThread, error)
+	GetAIThreadByID(threadID uuid.UUID) (*model.AIThread, error)
+	DeleteAIThread(threadID uuid.UUID, userID uuid.UUID) error
+	AddAIMessage(threadID uuid.UUID, role string, content string) error
+	GetAIMessagesByThreadID(threadID uuid.UUID) ([]model.AIMessage, error)
 }
 
 type repository struct {
@@ -1008,4 +1016,57 @@ func (r *repository) BackupDatabase() (string, error) {
 	sqlBuilder.WriteString("SET session_replication_role = 'origin';\n")
 
 	return sqlBuilder.String(), nil
+}
+
+// ============================================================
+// AI CHAT HISTORY IMPLEMENTATIONS
+// ============================================================
+
+func (r *repository) CreateAIThread(userID uuid.UUID, title string) (*model.AIThread, error) {
+	thread := &model.AIThread{
+		UserID: userID,
+		Title:  title,
+	}
+	err := r.db.Create(thread).Error
+	return thread, err
+}
+
+func (r *repository) GetAIThreadsByUserID(userID uuid.UUID) ([]model.AIThread, error) {
+	var threads []model.AIThread
+	err := r.db.Where("user_id = ?", userID).Order("updated_at DESC").Find(&threads).Error
+	return threads, err
+}
+
+func (r *repository) GetAIThreadByID(threadID uuid.UUID) (*model.AIThread, error) {
+	var thread model.AIThread
+	err := r.db.Preload("Messages").First(&thread, "id = ?", threadID).Error
+	if err != nil {
+		return nil, err
+	}
+	return &thread, nil
+}
+
+func (r *repository) DeleteAIThread(threadID uuid.UUID, userID uuid.UUID) error {
+	return r.db.Where("id = ? AND user_id = ?", threadID, userID).Delete(&model.AIThread{}).Error
+}
+
+func (r *repository) AddAIMessage(threadID uuid.UUID, role string, content string) error {
+	msg := &model.AIMessage{
+		ThreadID: threadID,
+		Role:     role,
+		Content:  content,
+	}
+	return r.db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(msg).Error; err != nil {
+			return err
+		}
+		// Update the thread's updated_at timestamp
+		return tx.Model(&model.AIThread{}).Where("id = ?", threadID).Update("updated_at", time.Now()).Error
+	})
+}
+
+func (r *repository) GetAIMessagesByThreadID(threadID uuid.UUID) ([]model.AIMessage, error) {
+	var messages []model.AIMessage
+	err := r.db.Where("thread_id = ?", threadID).Order("created_at ASC").Find(&messages).Error
+	return messages, err
 }
