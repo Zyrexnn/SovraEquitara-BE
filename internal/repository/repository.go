@@ -196,14 +196,14 @@ func (r *repository) GetReportsByProfileID(profileID uuid.UUID) ([]model.Report,
 func (r *repository) GetAllReports(statusFilter, sortBy string) ([]model.Report, error) {
 	var reports []model.Report
 	
-	orderClause := "created_at DESC"
+	orderClause := "CASE WHEN status = 'PENDING' THEN 0 ELSE 1 END ASC, created_at DESC"
 	switch sortBy {
 	case "votes":
-		orderClause = "vote_count DESC, created_at DESC"
+		orderClause = "CASE WHEN status = 'PENDING' THEN 0 ELSE 1 END ASC, vote_count DESC, created_at DESC"
 	case "comments":
-		orderClause = "comment_count DESC, created_at DESC"
+		orderClause = "CASE WHEN status = 'PENDING' THEN 0 ELSE 1 END ASC, comment_count DESC, created_at DESC"
 	case "category":
-		orderClause = "category_id ASC, created_at DESC"
+		orderClause = "CASE WHEN status = 'PENDING' THEN 0 ELSE 1 END ASC, category_id ASC, created_at DESC"
 	}
 
 	query := r.db.Preload("Profile").Preload("Category").Order(orderClause)
@@ -227,7 +227,7 @@ func (r *repository) GetPublicReports(sortBy string) ([]model.Report, error) {
 		orderClause = "category_id ASC, created_at DESC"
 	}
 
-	err := r.db.Preload("Profile").Preload("Category").Where("status IN ('VALID', 'WAITING_APPROVAL', 'RESOLVED')").Order(orderClause).Find(&reports).Error
+	err := r.db.Preload("Profile").Preload("Category").Where("status IN ('PENDING', 'VALID', 'WAITING_APPROVAL', 'RESOLVED')").Order(orderClause).Find(&reports).Error
 	return reports, err
 }
 
