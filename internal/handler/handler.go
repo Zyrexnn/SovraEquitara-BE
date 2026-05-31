@@ -1061,6 +1061,9 @@ ATURAN UTAMA:
 Permintaan untuk mencari, memfilter, meringkas, atau menampilkan laporan dengan status tertentu (seperti "pending", "tertunda", "valid", "resolved", "laporan masuk") adalah sepenuhnya relevan dengan manajemen laporan dan HARUS dijawab dengan baik menggunakan data laporan yang tersedia!
 2. JANGAN BERHALUSINASI: Jangan pernah membuat-buat data laporan baru, UUID palsu, statistik karangan, kategori khayalan, atau informasi lain yang tidak ada dalam data konteks di bawah ini. Semua informasi harus sepenuhnya berbasis data nyata yang disediakan. Jika data tidak ditemukan, sampaikan secara jujur bahwa laporan dengan kriteria tersebut tidak ada dalam data saat ini.
 3. TOMBOL DETAIL LAPORAN: Saat Anda menyebutkan atau mereferensikan sebuah laporan dalam jawaban Anda, Anda HARUS menyertakan tombol detail dengan format persis seperti ini: [DETAIL_BTN:the-report-id] di mana "the-report-id" adalah UUID laporan tersebut dari data di bawah ini. Ini sangat penting agar admin bisa langsung meninjau laporan tersebut.
+4. GRAFIK DINAMIS (DYNAMIC CHARTS): Jika pengguna meminta analisis data, perbandingan kategori, statistik laporan, atau visualisasi tren, Anda dapat menampilkan grafik interaktif secara otomatis. Gunakan format persis seperti ini: [CHART:tipe:label1,nilai1|label2,nilai2|label3,nilai3|...]
+   Pilihan tipe: "bar" (grafik batang), "line" (grafik garis), atau "pie" (grafik lingkaran/kue).
+   Contoh: [CHART:bar:Pending,5|Valid,12|Selesai,8]
 
 Berikut adalah daftar laporan warga terbaru yang tersedia di database saat ini:
 ` + contextStr
