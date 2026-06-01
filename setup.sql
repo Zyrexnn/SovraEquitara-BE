@@ -116,9 +116,11 @@ CREATE TABLE IF NOT EXISTS saved_reports (
 -- ============================================================
 CREATE TABLE IF NOT EXISTS otps (
     email TEXT PRIMARY KEY,
-    code TEXT NOT NULL,
+    code TEXT,
     name TEXT NOT NULL,
     password_hash TEXT NOT NULL,
+    failed_attempts INTEGER NOT NULL DEFAULT 0,
+    blocked_until TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
@@ -127,7 +129,9 @@ CREATE TABLE IF NOT EXISTS otps (
 -- ============================================================
 CREATE TABLE IF NOT EXISTS forgot_password_otps (
     email TEXT PRIMARY KEY,
-    code TEXT NOT NULL,
+    code TEXT,
+    failed_attempts INTEGER NOT NULL DEFAULT 0,
+    blocked_until TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
@@ -161,8 +165,8 @@ CREATE TRIGGER trigger_reports_updated_at
 CREATE OR REPLACE FUNCTION cleanup_expired_otps()
 RETURNS void AS $$
 BEGIN
-    DELETE FROM otps WHERE created_at < NOW() - INTERVAL '10 minutes';
-    DELETE FROM forgot_password_otps WHERE created_at < NOW() - INTERVAL '10 minutes';
+    DELETE FROM otps WHERE created_at < NOW() - INTERVAL '10 minutes' AND (blocked_until IS NULL OR blocked_until < NOW());
+    DELETE FROM forgot_password_otps WHERE created_at < NOW() - INTERVAL '10 minutes' AND (blocked_until IS NULL OR blocked_until < NOW());
 END;
 $$ LANGUAGE plpgsql;
 
