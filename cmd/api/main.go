@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"time"
 
 	"sovraequitara-be/internal/config"
 	"sovraequitara-be/internal/handler"
@@ -34,6 +35,26 @@ func main() {
 
 	// Auto Migrate AI Chat History Tables
 	db.AutoMigrate(&model.AIThread{}, &model.AIMessage{})
+
+	// Dynamic Startup Migrations for OTP lockout columns (Vulnerability 2)
+	db.Exec("ALTER TABLE otps ADD COLUMN IF NOT EXISTS failed_attempts INTEGER NOT NULL DEFAULT 0")
+	db.Exec("ALTER TABLE otps ADD COLUMN IF NOT EXISTS blocked_until TIMESTAMP WITH TIME ZONE")
+	db.Exec("ALTER TABLE otps ALTER COLUMN code DROP NOT NULL")
+
+	db.Exec("ALTER TABLE forgot_password_otps ADD COLUMN IF NOT EXISTS failed_attempts INTEGER NOT NULL DEFAULT 0")
+	db.Exec("ALTER TABLE forgot_password_otps ADD COLUMN IF NOT EXISTS blocked_until TIMESTAMP WITH TIME ZONE")
+	db.Exec("ALTER TABLE forgot_password_otps ALTER COLUMN code DROP NOT NULL")
+
+	// Start a background ticker to clean up expired OTPs every hour (Vulnerability 3 Housekeeping)
+	go func() {
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			log.Println("[HOUSEKEEPING] Running periodic cleanup of expired OTPs...")
+			db.Exec("DELETE FROM otps WHERE created_at < NOW() - INTERVAL '10 minutes' AND (blocked_until IS NULL OR blocked_until < NOW())")
+			db.Exec("DELETE FROM forgot_password_otps WHERE created_at < NOW() - INTERVAL '10 minutes' AND (blocked_until IS NULL OR blocked_until < NOW())")
+		}
+	}()
 
 	// Initialize Repository and Handler
 	repo := repository.NewRepository(db)
@@ -78,6 +99,7 @@ func main() {
 	authGroup.Post("/register", h.AuthRegister)
 	authGroup.Post("/login", h.AuthLogin)
 	authGroup.Post("/verify", h.AuthVerify)
+	authGroup.Post("/resend-otp", h.AuthResendOTP)
 	authGroup.Post("/admin-login", h.AdminLogin)
 	authGroup.Post("/forgot-password", h.ForgotPassword)
 	authGroup.Post("/verify-forgot-password-otp", h.VerifyForgotPasswordOTP)
@@ -114,6 +136,7 @@ func main() {
 	protected.Put("/profile", h.UpdateProfile)
 	protected.Post("/profile/avatar", h.UploadAvatar)
 	protected.Put("/profile/password", h.UpdateProfilePassword)
+	protected.Post("/profile/password-otp", h.SendProfilePasswordOTP)
 	protected.Get("/notifications", h.GetNotifications)
 	protected.Post("/ai-assistant", h.UserAIAssistant)
 

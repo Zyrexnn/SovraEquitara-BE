@@ -3,10 +3,11 @@ package handler
 import (
 	"bufio"
 	"bytes"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"log"
-	"math/rand"
+	"math/big"
 	"net/http"
 	"net/smtp"
 	"os"
@@ -122,8 +123,13 @@ func (h *Handler) generateJWT(userID string, role string) (string, error) {
 }
 
 func generateOTP() string {
-	rand.Seed(time.Now().UnixNano())
-	return fmt.Sprintf("%06d", rand.Intn(1000000))
+	n, err := rand.Int(rand.Reader, big.NewInt(1000000))
+	if err != nil {
+		log.Printf("[ERROR] CSPRNG failed: %v", err)
+		// Fallback in the extremely unlikely event of CSPRNG failure
+		return fmt.Sprintf("%06d", time.Now().UnixNano()%1000000)
+	}
+	return fmt.Sprintf("%06d", n.Int64())
 }
 
 func (h *Handler) sendOTPEmail(to string, code string) error {
@@ -230,6 +236,13 @@ func (h *Handler) AuthRegister(c *fiber.Ctx) error {
 	otpCode := generateOTP()
 	err = h.Repo.SaveOTP(req.Email, otpCode, req.Name, hashedPw)
 	if err != nil {
+		if strings.HasPrefix(err.Error(), "BLOCKED:") {
+			secs := strings.Split(err.Error(), ":")[1]
+			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
+				"error": fmt.Sprintf("Anda terlalu banyak melakukan percobaan salah. Silakan tunggu %s detik sebelum meminta OTP baru.", secs),
+				"cooldown": secs,
+			})
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal memproses pendaftaran"})
 	}
 
@@ -255,6 +268,16 @@ func (h *Handler) AuthVerify(c *fiber.Ctx) error {
 
 	name, passwordHash, err := h.Repo.VerifyOTP(req.Email, req.Token)
 	if err != nil {
+		if err.Error() == "BLOCKED" || err.Error() == "LOCKOUT" {
+			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{"error": "Terlalu banyak percobaan salah. Akun Anda dikunci selama 1 menit."})
+		}
+		if strings.HasPrefix(err.Error(), "WRONG_OTP:") {
+			left := strings.Split(err.Error(), ":")[1]
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": fmt.Sprintf("Kode OTP salah. Sisa percobaan: %s kali.", left)})
+		}
+		if err.Error() == "EXPIRED" {
+			return c.Status(fiber.StatusGone).JSON(fiber.Map{"error": "Kode OTP sudah kadaluarsa. Silakan mendaftar ulang."})
+		}
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Kode OTP salah atau sudah kadaluarsa"})
 	}
 
@@ -288,6 +311,45 @@ func (h *Handler) AuthVerify(c *fiber.Ctx) error {
 			"name":  name,
 			"role":  "USER",
 		},
+	})
+}
+
+// ============================================================
+// AUTH — RESEND OTP (Step 1.5: resend active OTP for email)
+// ============================================================
+
+func (h *Handler) AuthResendOTP(c *fiber.Ctx) error {
+	var req struct {
+		Email string `json:"email"`
+	}
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Bad Request: Data tidak valid"})
+	}
+
+	if req.Email == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Email wajib diisi"})
+	}
+
+	otpCode := generateOTP()
+	err := h.Repo.ResendOTP(req.Email, otpCode)
+	if err != nil {
+		if strings.HasPrefix(err.Error(), "BLOCKED:") {
+			secs := strings.Split(err.Error(), ":")[1]
+			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
+				"error": fmt.Sprintf("Anda terlalu banyak melakukan percobaan salah. Silakan tunggu %s detik sebelum meminta OTP baru.", secs),
+				"cooldown": secs,
+			})
+		}
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Permintaan tidak valid atau pendaftaran telah kedaluwarsa. Silakan daftar ulang."})
+	}
+
+	go h.sendOTPEmail(req.Email, otpCode)
+
+	log.Printf("\n[AUTH] OTP RESEND UNTUK %s: %s\n", req.Email, otpCode)
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{
+		"message": "Kode OTP telah dikirim ulang ke email Anda.",
+		"email":   req.Email,
 	})
 }
 
@@ -346,6 +408,13 @@ func (h *Handler) ForgotPassword(c *fiber.Ctx) error {
 
 	otpCode := generateOTP()
 	if err := h.Repo.SaveForgotPasswordOTP(req.Email, otpCode); err != nil {
+		if strings.HasPrefix(err.Error(), "BLOCKED:") {
+			secs := strings.Split(err.Error(), ":")[1]
+			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
+				"error": fmt.Sprintf("Anda terlalu banyak melakukan percobaan salah. Silakan tunggu %s detik sebelum meminta OTP baru.", secs),
+				"cooldown": secs,
+			})
+		}
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal memproses reset password"})
 	}
 
@@ -367,6 +436,16 @@ func (h *Handler) VerifyForgotPasswordOTP(c *fiber.Ctx) error {
 	}
 
 	if err := h.Repo.VerifyForgotPasswordOTP(req.Email, req.Token); err != nil {
+		if err.Error() == "BLOCKED" || err.Error() == "LOCKOUT" {
+			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{"error": "Terlalu banyak percobaan salah. Akun Anda dikunci selama 1 menit."})
+		}
+		if strings.HasPrefix(err.Error(), "WRONG_OTP:") {
+			left := strings.Split(err.Error(), ":")[1]
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": fmt.Sprintf("Kode OTP salah. Sisa percobaan: %s kali.", left)})
+		}
+		if err.Error() == "EXPIRED" {
+			return c.Status(fiber.StatusGone).JSON(fiber.Map{"error": "Kode OTP sudah kadaluarsa. Silakan minta kode baru."})
+		}
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Kode OTP salah atau sudah kadaluarsa"})
 	}
 
@@ -388,6 +467,16 @@ func (h *Handler) ResetPassword(c *fiber.Ctx) error {
 	}
 
 	if err := h.Repo.VerifyForgotPasswordOTP(req.Email, req.Token); err != nil {
+		if err.Error() == "BLOCKED" || err.Error() == "LOCKOUT" {
+			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{"error": "Terlalu banyak percobaan salah. Akun Anda dikunci selama 1 menit."})
+		}
+		if strings.HasPrefix(err.Error(), "WRONG_OTP:") {
+			left := strings.Split(err.Error(), ":")[1]
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": fmt.Sprintf("Kode OTP salah. Sisa percobaan: %s kali.", left)})
+		}
+		if err.Error() == "EXPIRED" {
+			return c.Status(fiber.StatusGone).JSON(fiber.Map{"error": "Kode OTP sudah kadaluarsa. Silakan minta kode baru."})
+		}
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Kode OTP salah atau sudah kadaluarsa"})
 	}
 
@@ -489,7 +578,7 @@ func (h *Handler) UpdateProfile(c *fiber.Ctx) error {
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Profil berhasil diperbarui"})
 }
 
-// UpdateProfilePassword — change password without OTP for any authenticated user (especially Admin/Super Admin).
+// UpdateProfilePassword — change password with OTP verification for added security.
 func (h *Handler) UpdateProfilePassword(c *fiber.Ctx) error {
 	userIDStr := c.Locals("userID").(string)
 	profileID, err := uuid.Parse(userIDStr)
@@ -500,6 +589,7 @@ func (h *Handler) UpdateProfilePassword(c *fiber.Ctx) error {
 	var req struct {
 		CurrentPassword string `json:"current_password"`
 		NewPassword     string `json:"new_password"`
+		OTP             string `json:"otp"`
 	}
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Data tidak valid"})
@@ -512,6 +602,26 @@ func (h *Handler) UpdateProfilePassword(c *fiber.Ctx) error {
 	profile, err := h.Repo.GetProfileByID(profileID)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal memuat profil"})
+	}
+
+	// Verify OTP first using the lockout/cooldown-enabled helper (only for non-admin/non-super_admin)
+	if profile.Role != "admin" && profile.Role != "super_admin" {
+		if len(req.OTP) != 6 {
+			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "Kode OTP harus 6 digit"})
+		}
+		if err := h.Repo.VerifyForgotPasswordOTP(profile.Email, req.OTP); err != nil {
+			if err.Error() == "BLOCKED" || err.Error() == "LOCKOUT" {
+				return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{"error": "Terlalu banyak percobaan salah. Akun Anda dikunci selama 1 menit."})
+			}
+			if strings.HasPrefix(err.Error(), "WRONG_OTP:") {
+				left := strings.Split(err.Error(), ":")[1]
+				return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": fmt.Sprintf("Kode OTP salah. Sisa percobaan: %s kali.", left)})
+			}
+			if err.Error() == "EXPIRED" {
+				return c.Status(fiber.StatusGone).JSON(fiber.Map{"error": "Kode OTP sudah kadaluarsa. Silakan minta kode baru."})
+			}
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Kode OTP salah atau sudah kadaluarsa"})
+		}
 	}
 
 	// Verify current password
@@ -529,7 +639,43 @@ func (h *Handler) UpdateProfilePassword(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal memperbarui kata sandi"})
 	}
 
+	// Clean up OTP on success (only for non-admin/non-super_admin)
+	if profile.Role != "admin" && profile.Role != "super_admin" {
+		h.Repo.DeleteForgotPasswordOTP(profile.Email)
+	}
+
 	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Kata sandi berhasil diperbarui"})
+}
+
+// SendProfilePasswordOTP — sends an OTP code for profile password updates
+func (h *Handler) SendProfilePasswordOTP(c *fiber.Ctx) error {
+	userIDStr := c.Locals("userID").(string)
+	profileID, err := uuid.Parse(userIDStr)
+	if err != nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"error": "Unauthorized"})
+	}
+
+	profile, err := h.Repo.GetProfileByID(profileID)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal memuat profil"})
+	}
+
+	otpCode := generateOTP()
+	if err := h.Repo.SaveForgotPasswordOTP(profile.Email, otpCode); err != nil {
+		if strings.HasPrefix(err.Error(), "BLOCKED:") {
+			secs := strings.Split(err.Error(), ":")[1]
+			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
+				"error": fmt.Sprintf("Anda terlalu banyak melakukan percobaan salah. Silakan tunggu %s detik sebelum meminta OTP baru.", secs),
+				"cooldown": secs,
+			})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gagal memproses pengiriman OTP"})
+	}
+
+	go h.sendForgotPasswordEmail(profile.Email, otpCode)
+	log.Printf("[AUTH] PROFILE PASSWORD CHANGE OTP UNTUK %s: %s\n", profile.Email, otpCode)
+
+	return c.Status(fiber.StatusOK).JSON(fiber.Map{"message": "Kode OTP pembaruan kata sandi telah dikirim ke email Anda."})
 }
 
 // ============================================================
