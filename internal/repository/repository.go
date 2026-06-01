@@ -67,6 +67,7 @@ type Repository interface {
 	SaveOTP(email, code, name, passwordHash string) error
 	VerifyOTP(email, code string) (name, passwordHash string, err error)
 	DeleteOTP(email string) error
+	ResendOTP(email, code string) error
 
 	// Forgot Password OTP
 	SaveForgotPasswordOTP(email, code string) error
@@ -598,29 +599,85 @@ func (r *repository) GetLeaderboard() ([]model.Profile, error) {
 // ============================================================
 
 func (r *repository) SaveOTP(email, code, name, passwordHash string) error {
-	query := `INSERT INTO otps (email, code, name, password_hash, created_at) 
-	          VALUES ($1, $2, $3, $4, NOW()) 
-	          ON CONFLICT (email) DO UPDATE SET code = EXCLUDED.code, name = EXCLUDED.name, password_hash = EXCLUDED.password_hash, created_at = NOW()`
+	// Check if currently blocked
+	var blockedUntil *time.Time
+	err := r.db.Raw("SELECT blocked_until FROM otps WHERE email = $1", email).Scan(&blockedUntil).Error
+	if err == nil && blockedUntil != nil && blockedUntil.After(time.Now()) {
+		return fmt.Errorf("BLOCKED:%d", int(time.Until(*blockedUntil).Seconds()))
+	}
+
+	query := `INSERT INTO otps (email, code, name, password_hash, failed_attempts, blocked_until, created_at) 
+	          VALUES ($1, $2, $3, $4, 0, NULL, NOW()) 
+	          ON CONFLICT (email) DO UPDATE SET code = EXCLUDED.code, name = EXCLUDED.name, password_hash = EXCLUDED.password_hash, failed_attempts = 0, blocked_until = NULL, created_at = NOW()`
 	return r.db.Exec(query, email, code, name, passwordHash).Error
 }
 
 func (r *repository) VerifyOTP(email, code string) (string, string, error) {
-	var res struct {
-		Name         string `gorm:"column:name"`
-		PasswordHash string `gorm:"column:password_hash"`
+	// 1. Fetch OTP record
+	var otp struct {
+		Code           *string    `gorm:"column:code"`
+		Name           string     `gorm:"column:name"`
+		PasswordHash   string     `gorm:"column:password_hash"`
+		FailedAttempts int        `gorm:"column:failed_attempts"`
+		BlockedUntil   *time.Time `gorm:"column:blocked_until"`
+		CreatedAt      time.Time  `gorm:"column:created_at"`
 	}
-	err := r.db.Raw("SELECT name, password_hash FROM otps WHERE email = $1 AND code = $2 AND created_at > NOW() - INTERVAL '10 minutes'", email, code).Scan(&res).Error
+	err := r.db.Raw("SELECT code, name, password_hash, failed_attempts, blocked_until, created_at FROM otps WHERE email = $1", email).Scan(&otp).Error
 	if err != nil {
 		return "", "", err
 	}
-	if res.Name == "" {
+	if otp.Name == "" {
 		return "", "", gorm.ErrRecordNotFound
 	}
-	return res.Name, res.PasswordHash, nil
+
+	// 2. Check if currently blocked
+	if otp.BlockedUntil != nil && otp.BlockedUntil.After(time.Now()) {
+		return "", "", fmt.Errorf("BLOCKED")
+	}
+
+	// 3. Check if OTP is expired (10 minutes)
+	if time.Since(otp.CreatedAt) > 10*time.Minute {
+		return "", "", fmt.Errorf("EXPIRED")
+	}
+
+	// 4. Check if code matches (and is not null)
+	if otp.Code == nil || *otp.Code == "" || *otp.Code != code {
+		newFailed := otp.FailedAttempts + 1
+		if newFailed >= 4 {
+			// Lockout! Block for 1 minute and clear code
+			r.db.Exec("UPDATE otps SET failed_attempts = $1, blocked_until = NOW() + INTERVAL '1 minute', code = NULL WHERE email = $2", newFailed, email)
+			return "", "", fmt.Errorf("LOCKOUT")
+		} else {
+			r.db.Exec("UPDATE otps SET failed_attempts = $1 WHERE email = $2", newFailed, email)
+			return "", "", fmt.Errorf("WRONG_OTP:%d", 4-newFailed)
+		}
+	}
+
+	return otp.Name, otp.PasswordHash, nil
 }
 
 func (r *repository) DeleteOTP(email string) error {
 	return r.db.Exec("DELETE FROM otps WHERE email = $1", email).Error
+}
+
+func (r *repository) ResendOTP(email, code string) error {
+	// Check if currently blocked
+	var blockedUntil *time.Time
+	err := r.db.Raw("SELECT blocked_until FROM otps WHERE email = $1", email).Scan(&blockedUntil).Error
+	if err == nil && blockedUntil != nil && blockedUntil.After(time.Now()) {
+		return fmt.Errorf("BLOCKED:%d", int(time.Until(*blockedUntil).Seconds()))
+	}
+
+	// First verify that the row actually exists
+	var exists int64
+	r.db.Table("otps").Where("email = ?", email).Count(&exists)
+	if exists == 0 {
+		return gorm.ErrRecordNotFound
+	}
+
+	// Update code and reset failed attempts
+	err = r.db.Exec("UPDATE otps SET code = $1, failed_attempts = 0, blocked_until = NULL, created_at = NOW() WHERE email = $2", code, email).Error
+	return err
 }
 
 // ============================================================
@@ -628,24 +685,61 @@ func (r *repository) DeleteOTP(email string) error {
 // ============================================================
 
 func (r *repository) SaveForgotPasswordOTP(email, code string) error {
-	// Auto Housekeeping: Delete expired OTPs older than 10 minutes
-	_ = r.db.Exec("DELETE FROM forgot_password_otps WHERE created_at < NOW() - INTERVAL '10 minutes'")
+	// Check if currently blocked
+	var blockedUntil *time.Time
+	err := r.db.Raw("SELECT blocked_until FROM forgot_password_otps WHERE email = $1", email).Scan(&blockedUntil).Error
+	if err == nil && blockedUntil != nil && blockedUntil.After(time.Now()) {
+		return fmt.Errorf("BLOCKED:%d", int(time.Until(*blockedUntil).Seconds()))
+	}
 
-	query := `INSERT INTO forgot_password_otps (email, code, created_at) 
-	          VALUES ($1, $2, NOW()) 
-	          ON CONFLICT (email) DO UPDATE SET code = EXCLUDED.code, created_at = NOW()`
+	// Auto Housekeeping: Delete expired OTPs older than 10 minutes (only if not blocked)
+	_ = r.db.Exec("DELETE FROM forgot_password_otps WHERE created_at < NOW() - INTERVAL '10 minutes' AND (blocked_until IS NULL OR blocked_until < NOW())")
+
+	query := `INSERT INTO forgot_password_otps (email, code, failed_attempts, blocked_until, created_at) 
+	          VALUES ($1, $2, 0, NULL, NOW()) 
+	          ON CONFLICT (email) DO UPDATE SET code = EXCLUDED.code, failed_attempts = 0, blocked_until = NULL, created_at = NOW()`
 	return r.db.Exec(query, email, code).Error
 }
 
 func (r *repository) VerifyForgotPasswordOTP(email, code string) error {
-	var count int64
-	err := r.db.Table("forgot_password_otps").Where("email = ? AND code = ? AND created_at > NOW() - INTERVAL '10 minutes'", email, code).Count(&count).Error
+	// 1. Fetch OTP record
+	var otp struct {
+		Code           *string    `gorm:"column:code"`
+		FailedAttempts int        `gorm:"column:failed_attempts"`
+		BlockedUntil   *time.Time `gorm:"column:blocked_until"`
+		CreatedAt      time.Time  `gorm:"column:created_at"`
+	}
+	err := r.db.Raw("SELECT code, failed_attempts, blocked_until, created_at FROM forgot_password_otps WHERE email = $1", email).Scan(&otp).Error
 	if err != nil {
 		return err
 	}
-	if count == 0 {
+	if otp.CreatedAt.IsZero() {
 		return gorm.ErrRecordNotFound
 	}
+
+	// 2. Check if currently blocked
+	if otp.BlockedUntil != nil && otp.BlockedUntil.After(time.Now()) {
+		return fmt.Errorf("BLOCKED")
+	}
+
+	// 3. Check if OTP is expired (10 minutes)
+	if time.Since(otp.CreatedAt) > 10*time.Minute {
+		return fmt.Errorf("EXPIRED")
+	}
+
+	// 4. Check if code matches (and is not null)
+	if otp.Code == nil || *otp.Code == "" || *otp.Code != code {
+		newFailed := otp.FailedAttempts + 1
+		if newFailed >= 4 {
+			// Lockout! Block for 1 minute and clear code
+			r.db.Exec("UPDATE forgot_password_otps SET failed_attempts = $1, blocked_until = NOW() + INTERVAL '1 minute', code = NULL WHERE email = $2", newFailed, email)
+			return fmt.Errorf("LOCKOUT")
+		} else {
+			r.db.Exec("UPDATE forgot_password_otps SET failed_attempts = $1 WHERE email = $2", newFailed, email)
+			return fmt.Errorf("WRONG_OTP:%d", 4-newFailed)
+		}
+	}
+
 	return nil
 }
 
