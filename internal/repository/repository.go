@@ -1156,7 +1156,7 @@ func (r *repository) AddAIMessage(threadID uuid.UUID, role string, content strin
 		}
 		// Update the thread's updated_at timestamp
 		return tx.Model(&model.AIThread{}).Where("id = ?", threadID).Update("updated_at", time.Now()).Error
-	})
+	})	
 }
 
 func (r *repository) GetAIMessagesByThreadID(threadID uuid.UUID) ([]model.AIMessage, error) {

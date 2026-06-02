@@ -1084,7 +1084,7 @@ func (h *Handler) SSEHandler(c *fiber.Ctx) error {
 	c.Set("Cache-Control", "no-cache")
 	c.Set("Connection", "keep-alive")
 	c.Set("Access-Control-Allow-Origin", "*")
-	c.Set("X-Accel-Buffering", "no") // Disable Nginx buffering if proxied
+	c.Set("X-Accel-Buffering", "no") // Disable Nginx buffering if proxied  
 
 	// Create a buffered channel for this client
 	ch := make(chan []byte, 32)
