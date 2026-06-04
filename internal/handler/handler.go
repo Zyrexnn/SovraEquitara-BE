@@ -1154,10 +1154,32 @@ func (h *Handler) GetReportStats(c *fiber.Ctx) error {
 // ============================================================
 // AI ASSISTANT
 // ============================================================
-
 type GeminiRequest struct {
 	Contents          []GeminiContent `json:"contents"`
 	SystemInstruction *GeminiSystem   `json:"system_instruction,omitempty"`
+	Tools             []GeminiTool    `json:"tools,omitempty"`
+}
+
+type GeminiTool struct {
+	FunctionDeclarations []GeminiFunctionDeclaration `json:"function_declarations,omitempty"`
+}
+
+type GeminiFunctionDeclaration struct {
+	Name        string                `json:"name"`
+	Description string                `json:"description"`
+	Parameters  *GeminiFunctionParams `json:"parameters,omitempty"`
+}
+
+type GeminiFunctionParams struct {
+	Type       string                          `json:"type"`
+	Properties map[string]GeminiSchemaProperty `json:"properties"`
+	Required   []string                        `json:"required,omitempty"`
+}
+
+type GeminiSchemaProperty struct {
+	Type        string   `json:"type"`
+	Description string   `json:"description,omitempty"`
+	Enum        []string `json:"enum,omitempty"`
 }
 
 type GeminiContent struct {
@@ -1166,11 +1188,31 @@ type GeminiContent struct {
 }
 
 type GeminiPart struct {
-	Text string `json:"text"`
+	Text             string                  `json:"text,omitempty"`
+	FunctionCall     *GeminiFunctionCall     `json:"functionCall,omitempty"`
+	FunctionResponse *GeminiFunctionResponse `json:"functionResponse,omitempty"`
+}
+
+type GeminiFunctionCall struct {
+	Name string                 `json:"name"`
+	Args map[string]interface{} `json:"args"`
+}
+
+type GeminiFunctionResponse struct {
+	Name     string                 `json:"name"`
+	Response map[string]interface{} `json:"response"`
 }
 
 type GeminiSystem struct {
 	Parts []GeminiPart `json:"parts"`
+}
+
+type GeminiResponse struct {
+	Candidates []GeminiCandidate `json:"candidates"`
+}
+
+type GeminiCandidate struct {
+	Content GeminiContent `json:"content"`
 }
 
 type LocalChatRequest struct {
@@ -1292,12 +1334,73 @@ Berikut adalah daftar laporan warga terbaru yang tersedia di database saat ini:
 		}
 		url := "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + apiKey
 
-		payload := GeminiRequest{
-			SystemInstruction: &GeminiSystem{
-				Parts: []GeminiPart{{Text: systemPrompt}},
+		// Define GORM-backed tools for database access
+		tools := []GeminiTool{
+			{
+				FunctionDeclarations: []GeminiFunctionDeclaration{
+					{
+						Name:        "get_system_stats",
+						Description: "Mendapatkan statistik platform keseluruhan secara real-time seperti total laporan, jumlah laporan pending, valid, resolved, serta total admin dan warga.",
+					},
+					{
+						Name:        "get_reports",
+						Description: "Mengambil daftar laporan terbaru dari database dengan filter status, pengurutan, dan limit tertentu.",
+						Parameters: &GeminiFunctionParams{
+							Type: "object",
+							Properties: map[string]GeminiSchemaProperty{
+								"status": {
+									Type:        "string",
+									Description: "Filter status laporan: 'PENDING', 'VALID', 'WAITING_APPROVAL', 'RESOLVED'. Kosongkan untuk semua status.",
+								},
+								"sort_by": {
+									Type:        "string",
+									Description: "Pengurutan: 'recent' (terbaru), 'votes' (dukungan terbanyak), 'comments' (diskusi terbanyak).",
+								},
+								"limit": {
+									Type:        "integer",
+									Description: "Batas jumlah laporan yang diambil (default 20, max 50).",
+								},
+							},
+						},
+					},
+					{
+						Name:        "search_reports",
+						Description: "Mencari laporan dari database secara real-time berdasarkan kata kunci pencarian dalam deskripsi aduan atau detail lokasi.",
+						Parameters: &GeminiFunctionParams{
+							Type: "object",
+							Properties: map[string]GeminiSchemaProperty{
+								"query": {
+									Type:        "string",
+									Description: "Kata kunci pencarian (misalnya: 'sampah', 'jalan rusak', 'lampu mati').",
+								},
+							},
+							Required: []string{"query"},
+						},
+					},
+					{
+						Name:        "get_report_details",
+						Description: "Mendapatkan detail lengkap dan ter-update dari sebuah laporan warga berdasarkan ID UUID-nya. Data mencakup deskripsi, pelapor, kategori, lokasi peta, jumlah dukungan, status, dan riwayat diskusi/komentar warga.",
+						Parameters: &GeminiFunctionParams{
+							Type: "object",
+							Properties: map[string]GeminiSchemaProperty{
+								"report_id": {
+									Type:        "string",
+									Description: "UUID laporan yang ingin dilihat detailnya.",
+								},
+							},
+							Required: []string{"report_id"},
+						},
+					},
+					{
+						Name:        "get_leaderboard",
+						Description: "Mendapatkan data papan peringkat (leaderboard) 10 warga teraktif beserta poin keaktifan mereka saat ini.",
+					},
+				},
 			},
-			Contents: []GeminiContent{},
 		}
+
+		// Initialize conversation contents
+		var contents []GeminiContent
 
 		// Append past conversation history
 		for _, m := range pastMessages {
@@ -1305,38 +1408,302 @@ Berikut adalah daftar laporan warga terbaru yang tersedia di database saat ini:
 			if role == "assistant" {
 				role = "model"
 			}
-			payload.Contents = append(payload.Contents, GeminiContent{
+			contents = append(contents, GeminiContent{
 				Role:  role,
 				Parts: []GeminiPart{{Text: m.Content}},
 			})
 		}
 
 		// Append current query
-		payload.Contents = append(payload.Contents, GeminiContent{
+		contents = append(contents, GeminiContent{
 			Role:  "user",
 			Parts: []GeminiPart{{Text: req.Query}},
 		})
 
-		body, _ := json.Marshal(payload)
-		resp, err := http.Post(url, "application/json", bytes.NewBuffer(body))
-		if err != nil {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gemini API is unreachable"})
+		// Run function calling execution loop (maximum 5 turns to prevent infinite loops)
+		maxTurns := 5
+		for turn := 0; turn < maxTurns; turn++ {
+			payload := GeminiRequest{
+				SystemInstruction: &GeminiSystem{
+					Parts: []GeminiPart{{Text: systemPrompt}},
+				},
+				Contents: contents,
+				Tools:    tools,
+			}
+
+			body, _ := json.Marshal(payload)
+			resp, err := http.Post(url, "application/json", bytes.NewBuffer(body))
+			if err != nil {
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Gemini API is unreachable"})
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				var errRes map[string]interface{}
+				json.NewDecoder(resp.Body).Decode(&errRes)
+				log.Printf("[ERROR] Gemini API returned status %d: %v\n", resp.StatusCode, errRes)
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": fmt.Sprintf("Gemini API error status %d", resp.StatusCode)})
+			}
+
+			var geminiResp GeminiResponse
+			if err := json.NewDecoder(resp.Body).Decode(&geminiResp); err != nil {
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Invalid response structure from Gemini"})
+			}
+
+			if len(geminiResp.Candidates) == 0 {
+				return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Empty candidates from Gemini"})
+			}
+
+			candidate := geminiResp.Candidates[0]
+			modelMsg := candidate.Content
+			if modelMsg.Role == "" {
+				modelMsg.Role = "model"
+			}
+
+			// Add model response to history
+			contents = append(contents, modelMsg)
+
+			// Check if Gemini wants to call any tool
+			hasFunctionCall := false
+			var functionResponseParts []GeminiPart
+
+			for _, part := range modelMsg.Parts {
+				if part.FunctionCall != nil {
+					hasFunctionCall = true
+					fnCall := part.FunctionCall
+					log.Printf("[INFO] Gemini requested tool execution: %s, args: %v\n", fnCall.Name, fnCall.Args)
+
+					resultMap := make(map[string]interface{})
+
+					switch fnCall.Name {
+					case "get_system_stats":
+						stats, err := h.Repo.GetSystemStats()
+						if err != nil {
+							resultMap["error"] = err.Error()
+						} else {
+							resultMap["stats"] = stats
+						}
+
+					case "get_reports":
+						status := ""
+						if s, ok := fnCall.Args["status"].(string); ok {
+							status = s
+						}
+						sortBy := "recent"
+						if s, ok := fnCall.Args["sort_by"].(string); ok {
+							sortBy = s
+						}
+						limit := 20
+						if lVal, ok := fnCall.Args["limit"]; ok {
+							switch v := lVal.(type) {
+							case float64:
+								limit = int(v)
+							case int:
+								limit = v
+							}
+						}
+
+						reports, err := h.Repo.GetAllReports(status, sortBy)
+						if err != nil {
+							resultMap["error"] = err.Error()
+						} else {
+							type ReportCompact struct {
+								ID             string    `json:"id"`
+								Description    string    `json:"description"`
+								Status         string    `json:"status"`
+								LocationDetail string    `json:"location_detail"`
+								CategoryName   string    `json:"category_name"`
+								ReporterName   string    `json:"reporter_name"`
+								VoteCount      int       `json:"vote_count"`
+								CommentCount   int       `json:"comment_count"`
+								CreatedAt      time.Time `json:"created_at"`
+							}
+							var compacts []ReportCompact
+							for i, r := range reports {
+								if i >= limit {
+									break
+								}
+								catName := ""
+								if r.Category != nil {
+									catName = r.Category.Name
+								}
+								repName := ""
+								if r.Profile != nil {
+									repName = r.Profile.FullName
+								}
+								compacts = append(compacts, ReportCompact{
+									ID:             r.ID.String(),
+									Description:    r.Description,
+									Status:         r.Status,
+									LocationDetail: r.LocationDetail,
+									CategoryName:   catName,
+									ReporterName:   repName,
+									VoteCount:      r.VoteCount,
+									CommentCount:   r.CommentCount,
+									CreatedAt:      r.CreatedAt,
+								})
+							}
+							resultMap["reports"] = compacts
+						}
+
+					case "search_reports":
+						query := ""
+						if q, ok := fnCall.Args["query"].(string); ok {
+							query = q
+						}
+						reports, err := h.Repo.SearchReports(query)
+						if err != nil {
+							resultMap["error"] = err.Error()
+						} else {
+							type ReportCompact struct {
+								ID             string    `json:"id"`
+								Description    string    `json:"description"`
+								Status         string    `json:"status"`
+								LocationDetail string    `json:"location_detail"`
+								CategoryName   string    `json:"category_name"`
+								ReporterName   string    `json:"reporter_name"`
+								VoteCount      int       `json:"vote_count"`
+								CommentCount   int       `json:"comment_count"`
+								CreatedAt      time.Time `json:"created_at"`
+							}
+							var compacts []ReportCompact
+							for i, r := range reports {
+								if i >= 20 { // Max search limit to save tokens
+									break
+								}
+								catName := ""
+								if r.Category != nil {
+									catName = r.Category.Name
+								}
+								repName := ""
+								if r.Profile != nil {
+									repName = r.Profile.FullName
+								}
+								compacts = append(compacts, ReportCompact{
+									ID:             r.ID.String(),
+									Description:    r.Description,
+									Status:         r.Status,
+									LocationDetail: r.LocationDetail,
+									CategoryName:   catName,
+									ReporterName:   repName,
+									VoteCount:      r.VoteCount,
+									CommentCount:   r.CommentCount,
+									CreatedAt:      r.CreatedAt,
+								})
+							}
+							resultMap["reports"] = compacts
+						}
+
+					case "get_report_details":
+						reportIDStr := ""
+						if id, ok := fnCall.Args["report_id"].(string); ok {
+							reportIDStr = id
+						}
+						reportID, err := uuid.Parse(reportIDStr)
+						if err != nil {
+							resultMap["error"] = "Format ID laporan tidak valid (harus UUID)"
+						} else {
+							report, err := h.Repo.GetReportByID(reportID)
+							if err != nil {
+								resultMap["error"] = err.Error()
+							} else {
+								comments, _ := h.Repo.GetCommentsByReportID(reportID)
+								type CommentCompact struct {
+									UserName  string    `json:"user_name"`
+									Content   string    `json:"content"`
+									CreatedAt time.Time `json:"created_at"`
+								}
+								var compactComments []CommentCompact
+								for _, c := range comments {
+									uName := "Warga"
+									if c.User != nil {
+										uName = c.User.FullName
+									}
+									compactComments = append(compactComments, CommentCompact{
+										UserName:  uName,
+										Content:   c.Content,
+										CreatedAt: c.CreatedAt,
+									})
+								}
+
+								catName := ""
+								if report.Category != nil {
+									catName = report.Category.Name
+								}
+								repName := ""
+								if report.Profile != nil {
+									repName = report.Profile.FullName
+								}
+
+								resultMap["report"] = map[string]interface{}{
+									"id":              report.ID.String(),
+									"description":     report.Description,
+									"status":          report.Status,
+									"location_detail": report.LocationDetail,
+									"latitude":        report.Latitude,
+									"longitude":       report.Longitude,
+									"category_name":   catName,
+									"reporter_name":   repName,
+									"vote_count":      report.VoteCount,
+									"comment_count":   report.CommentCount,
+									"created_at":      report.CreatedAt,
+									"comments":        compactComments,
+								}
+							}
+						}
+
+					case "get_leaderboard":
+						leaderboard, err := h.Repo.GetLeaderboard()
+						if err != nil {
+							resultMap["error"] = err.Error()
+						} else {
+							type LeaderCompact struct {
+								FullName string `json:"full_name"`
+								Points   int    `json:"points"`
+								Role     string `json:"role"`
+							}
+							var compacts []LeaderCompact
+							for _, p := range leaderboard {
+								compacts = append(compacts, LeaderCompact{
+									FullName: p.FullName,
+									Points:   p.Points,
+									Role:     p.Role,
+								})
+							}
+							resultMap["leaderboard"] = compacts
+						}
+
+					default:
+						resultMap["error"] = fmt.Sprintf("Alat '%s' tidak ditemukan", fnCall.Name)
+					}
+
+					functionResponseParts = append(functionResponseParts, GeminiPart{
+						FunctionResponse: &GeminiFunctionResponse{
+							Name:     fnCall.Name,
+							Response: resultMap,
+						},
+					})
+				}
+			}
+
+			if hasFunctionCall {
+				// Send tool execution results back to model as user turn
+				contents = append(contents, GeminiContent{
+					Role:  "user",
+					Parts: functionResponseParts,
+				})
+				continue
+			}
+
+			// If no tool/function call requested, this is the final answer!
+			for _, part := range modelMsg.Parts {
+				if part.Text != "" {
+					responseText = part.Text
+					break
+				}
+			}
+			break
 		}
-		defer resp.Body.Close()
-
-		var res map[string]interface{}
-		json.NewDecoder(resp.Body).Decode(&res)
-
-		candidates, ok := res["candidates"].([]interface{})
-		if !ok || len(candidates) == 0 {
-			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Invalid Gemini response"})
-		}
-
-		candidate := candidates[0].(map[string]interface{})
-		contentObj := candidate["content"].(map[string]interface{})
-		parts := contentObj["parts"].([]interface{})
-		firstPart := parts[0].(map[string]interface{})
-		responseText = firstPart["text"].(string)
 	}
 
 	// Save messages dynamically under the active thread

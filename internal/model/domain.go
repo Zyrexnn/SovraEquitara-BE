@@ -120,6 +120,15 @@ type ReportStats struct {
 	Resolved int64 `json:"resolved"`
 }
 
+type SystemStats struct {
+	TotalReports    int64 `json:"total_reports"`
+	PendingReports  int64 `json:"pending_reports"`
+	ValidReports    int64 `json:"valid_reports"`
+	ResolvedReports int64 `json:"resolved_reports"`
+	TotalUsers      int64 `json:"total_users"`
+	TotalAdmins     int64 `json:"total_admins"`
+}
+
 type AIThread struct {
 	ID        uuid.UUID   `gorm:"type:uuid;primaryKey;default:gen_random_uuid()" json:"id"`
 	UserID    uuid.UUID   `gorm:"type:uuid;not null;index" json:"user_id"`

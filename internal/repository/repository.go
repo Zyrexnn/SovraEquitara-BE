@@ -38,6 +38,8 @@ type Repository interface {
 	RejectResolution(reportID, profileID uuid.UUID) error
 	CancelReport(reportID uuid.UUID) error
 	GetReportStats(profileID uuid.UUID) (*model.ReportStats, error)
+	GetSystemStats() (*model.SystemStats, error)
+	SearchReports(keyword string) ([]model.Report, error)
 	DeleteReport(reportID, profileID uuid.UUID) error
 
 	// Saved Reports
@@ -425,6 +427,38 @@ func (r *repository) GetReportStats(profileID uuid.UUID) (*model.ReportStats, er
 	
 	err = r.db.Model(&model.Report{}).Where("profile_id = ? AND status = ?", profileID, "RESOLVED").Count(&stats.Resolved).Error
 	return &stats, err
+}
+
+func (r *repository) GetSystemStats() (*model.SystemStats, error) {
+	var stats model.SystemStats
+	if err := r.db.Model(&model.Report{}).Count(&stats.TotalReports).Error; err != nil {
+		return nil, err
+	}
+	if err := r.db.Model(&model.Report{}).Where("status = ?", "PENDING").Count(&stats.PendingReports).Error; err != nil {
+		return nil, err
+	}
+	if err := r.db.Model(&model.Report{}).Where("status = ?", "VALID").Count(&stats.ValidReports).Error; err != nil {
+		return nil, err
+	}
+	if err := r.db.Model(&model.Report{}).Where("status = ?", "RESOLVED").Count(&stats.ResolvedReports).Error; err != nil {
+		return nil, err
+	}
+	if err := r.db.Model(&model.Profile{}).Where("role = ?", "USER").Count(&stats.TotalUsers).Error; err != nil {
+		return nil, err
+	}
+	if err := r.db.Model(&model.Profile{}).Where("role IN ('admin', 'super_admin')").Count(&stats.TotalAdmins).Error; err != nil {
+		return nil, err
+	}
+	return &stats, nil
+}
+
+func (r *repository) SearchReports(keyword string) ([]model.Report, error) {
+	var reports []model.Report
+	err := r.db.Preload("Profile").Preload("Category").
+		Where("description ILIKE ? OR location_detail ILIKE ?", "%"+keyword+"%", "%"+keyword+"%").
+		Order("created_at DESC").
+		Find(&reports).Error
+	return reports, err
 }
 
 func (r *repository) DeleteReport(reportID, profileID uuid.UUID) error {
